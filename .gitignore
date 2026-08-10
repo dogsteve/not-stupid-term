@@ -1,0 +1,8 @@
+/target
+test*
+fix_*
+patch_*
+plan_test*
+get_scrollback*
+*.tmp
+fix_plan.txt
