@@ -60,31 +60,126 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
     visuals.panel_fill = egui::Color32::from_rgba_unmultiplied(panel_bg.0, panel_bg.1, panel_bg.2, alpha);
     visuals.override_text_color = Some(egui::Color32::from_rgb(text.0, text.1, text.2));
     visuals.selection.bg_fill = egui::Color32::from_rgb(accent.0, accent.1, accent.2);
-    
-    let dark_factor = if is_dark { 5 } else { 0 };
-    visuals.extreme_bg_color = egui::Color32::from_rgba_unmultiplied(panel_bg.0.saturating_sub(dark_factor), panel_bg.1.saturating_sub(dark_factor), panel_bg.2.saturating_sub(dark_factor), alpha);
-    let light_factor = if is_dark { 10 } else { 0 };
-    visuals.faint_bg_color = egui::Color32::from_rgba_unmultiplied(bg.0.saturating_add(light_factor), bg.1.saturating_add(light_factor), bg.2.saturating_add(light_factor), alpha);
-    
-    visuals.widgets.noninteractive.bg_fill = visuals.panel_fill;
-    visuals.widgets.inactive.bg_fill = visuals.faint_bg_color;
-    visuals.widgets.hovered.bg_fill = visuals.selection.bg_fill.linear_multiply(0.3);
-    visuals.widgets.active.bg_fill = visuals.selection.bg_fill.linear_multiply(0.5);
+    visuals.selection.stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
 
-    visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(if is_dark { 45 } else { 200 }));
+    let bg_color = egui::Color32::from_rgb(bg.0, bg.1, bg.2);
+    let panel_color = egui::Color32::from_rgb(panel_bg.0, panel_bg.1, panel_bg.2);
+    let text_c = egui::Color32::from_rgb(text.0, text.1, text.2);
+    let accent_c = egui::Color32::from_rgb(accent.0, accent.1, accent.2);
 
+    // Extreme & faint backgrounds
+    visuals.extreme_bg_color = if is_dark {
+        egui::Color32::from_rgb(panel_bg.0.saturating_sub(5), panel_bg.1.saturating_sub(5), panel_bg.2.saturating_sub(5))
+    } else {
+        egui::Color32::from_rgb(255, 255, 255)
+    };
+    visuals.faint_bg_color = if is_dark {
+        egui::Color32::from_rgb(bg.0.saturating_add(8), bg.1.saturating_add(8), bg.2.saturating_add(8))
+    } else {
+        egui::Color32::from_rgb(bg.0.saturating_sub(8), bg.1.saturating_sub(8), bg.2.saturating_sub(8))
+    };
+
+    // === Widget styling: buttons, dropdowns, menus, sliders ===
+    let rounding = egui::Rounding::same(6.0);
+    let subtle_stroke = egui::Stroke::new(1.0, if is_dark {
+        egui::Color32::from_white_alpha(15)
+    } else {
+        egui::Color32::from_black_alpha(20)
+    });
+    let hover_stroke = egui::Stroke::new(1.0, accent_c.linear_multiply(0.5));
+
+    // Non-interactive widgets (labels, separators)
+    visuals.widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
+    visuals.widgets.noninteractive.weak_bg_fill = egui::Color32::TRANSPARENT;
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text_c.linear_multiply(0.7));
+    visuals.widgets.noninteractive.rounding = rounding;
+
+    // Inactive widgets (buttons at rest)
+    visuals.widgets.inactive.bg_fill = if is_dark {
+        egui::Color32::from_white_alpha(10)
+    } else {
+        egui::Color32::from_black_alpha(8)
+    };
+    visuals.widgets.inactive.weak_bg_fill = if is_dark {
+        egui::Color32::from_white_alpha(10)
+    } else {
+        egui::Color32::from_black_alpha(8)
+    };
+    visuals.widgets.inactive.bg_stroke = subtle_stroke;
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_c.linear_multiply(0.85));
+    visuals.widgets.inactive.rounding = rounding;
+
+    // Hovered widgets — KEY: visible highlight
+    visuals.widgets.hovered.bg_fill = if is_dark {
+        accent_c.linear_multiply(0.2)
+    } else {
+        accent_c.linear_multiply(0.12)
+    };
+    visuals.widgets.hovered.weak_bg_fill = if is_dark {
+        accent_c.linear_multiply(0.2)
+    } else {
+        accent_c.linear_multiply(0.12)
+    };
+    visuals.widgets.hovered.bg_stroke = hover_stroke;
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, text_c);
+    visuals.widgets.hovered.rounding = rounding;
+
+    // Active/pressed widgets
+    visuals.widgets.active.bg_fill = accent_c.linear_multiply(0.35);
+    visuals.widgets.active.weak_bg_fill = accent_c.linear_multiply(0.35);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, accent_c.linear_multiply(0.7));
+    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, text_c);
+    visuals.widgets.active.rounding = rounding;
+
+    // Open (combo box expanded, menu open)
+    visuals.widgets.open.bg_fill = if is_dark {
+        egui::Color32::from_white_alpha(18)
+    } else {
+        egui::Color32::from_black_alpha(12)
+    };
+    visuals.widgets.open.weak_bg_fill = if is_dark {
+        egui::Color32::from_white_alpha(18)
+    } else {
+        egui::Color32::from_black_alpha(12)
+    };
+    visuals.widgets.open.bg_stroke = hover_stroke;
+    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.5, text_c);
+    visuals.widgets.open.rounding = rounding;
+
+    // Window & menu chrome
+    visuals.window_stroke = egui::Stroke::new(1.0, if is_dark {
+        egui::Color32::from_white_alpha(20)
+    } else {
+        egui::Color32::from_black_alpha(15)
+    });
     visuals.window_rounding = egui::Rounding::same(config.window_rounding);
     visuals.menu_rounding = egui::Rounding::same(8.0);
-
-    visuals.window_shadow = egui::epaint::Shadow {
-        offset: [0.0, 8.0].into(),
-        blur: 24.0,
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0.0, 4.0].into(),
+        blur: 12.0,
         spread: 0.0,
-        color: egui::Color32::from_black_alpha(180),
+        color: egui::Color32::from_black_alpha(if is_dark { 120 } else { 40 }),
     };
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0.0, 6.0].into(),
+        blur: 20.0,
+        spread: 0.0,
+        color: egui::Color32::from_black_alpha(if is_dark { 160 } else { 50 }),
+    };
+
+    // Separator & striped rows
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, if is_dark {
+        egui::Color32::from_white_alpha(12)
+    } else {
+        egui::Color32::from_black_alpha(10)
+    });
 
     let mut style = (*ctx.style()).clone();
     style.spacing.window_margin = egui::Margin::same(12.0);
+    style.spacing.button_padding = egui::vec2(10.0, 4.0);
+    style.spacing.item_spacing = egui::vec2(8.0, 4.0);
+    style.spacing.menu_margin = egui::Margin::same(6.0);
 
     for (text_style, font_id) in style.text_styles.iter_mut() {
         match text_style {

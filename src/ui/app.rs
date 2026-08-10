@@ -49,165 +49,121 @@ impl XTermApp {
 
     fn render_top_bar(&mut self, ctx: &egui::Context) {
         let is_mac = std::env::consts::OS == "macos";
-        let window_rounding = if is_mac { 12.0 } else { 8.0 };
+        let is_dark = ctx.style().visuals.dark_mode;
+        let accent = ctx.style().visuals.selection.bg_fill;
 
         let panel_frame = egui::Frame::default()
-            .fill(egui::Color32::TRANSPARENT)
+            .fill(ctx.style().visuals.panel_fill)
             .inner_margin(egui::Margin {
-                left: 8.0,
-                right: 8.0,
-                top: 8.0,
-                bottom: 0.0,
+                left: 8.0, right: 8.0, top: 6.0, bottom: 0.0,
             })
             .rounding(egui::Rounding {
-                nw: window_rounding,
-                ne: window_rounding,
-                sw: 0.0,
-                se: 0.0,
-            })
-            .fill(ctx.style().visuals.panel_fill);
+                nw: if is_mac { 12.0 } else { 0.0 },
+                ne: if is_mac { 12.0 } else { 0.0 },
+                sw: 0.0, se: 0.0,
+            });
 
         egui::TopBottomPanel::top("top_bar").frame(panel_frame).show(ctx, |ui| {
-            // Top Bar Double-Click for Fullscreen/Maximize & Single Click Dragging
-            let title_bar_rect = ui.max_rect();
-            let title_bar_response =
-                ui.interact(title_bar_rect, ui.id().with("main_title_bar"), egui::Sense::click_and_drag());
-
-            if title_bar_response.double_clicked() {
-                let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
-            } else if title_bar_response.is_pointer_button_down_on() {
+            // Drag + double-click maximize
+            let title_rect = ui.max_rect();
+            let title_resp = ui.interact(title_rect, ui.id().with("title_bar"), egui::Sense::click_and_drag());
+            if title_resp.double_clicked() {
+                let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+            } else if title_resp.is_pointer_button_down_on() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
 
             ui.horizontal(|ui| {
-                let is_mac = std::env::consts::OS == "macos";
-
+                // macOS traffic lights
                 if is_mac {
-                    // macOS style window controls (Left)
                     ui.add_space(4.0);
-
-                    // Close (Red)
-                    let (rect, response) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::click());
-                    if ui.is_rect_visible(rect) {
-                        let color = egui::Color32::from_rgb(255, 95, 86);
-                        ui.painter().circle_filled(rect.center(), 6.0, color);
+                    for (color, action) in [
+                        (egui::Color32::from_rgb(255, 95, 86), "close"),
+                        (egui::Color32::from_rgb(255, 189, 46), "minimize"),
+                        (egui::Color32::from_rgb(39, 201, 63), "maximize"),
+                    ] {
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::click());
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().circle_filled(rect.center(), 6.0, color);
+                        }
+                        if resp.clicked() {
+                            match action {
+                                "close" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                                "minimize" => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
+                                _ => {
+                                    let m = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!m));
+                                }
+                            }
+                        }
+                        ui.add_space(4.0);
                     }
-                    if response.clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-
-                    ui.add_space(4.0);
-
-                    // Minimize (Yellow)
-                    let (rect, response) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::click());
-                    if ui.is_rect_visible(rect) {
-                        let color = egui::Color32::from_rgb(255, 189, 46);
-                        ui.painter().circle_filled(rect.center(), 6.0, color);
-                    }
-                    if response.clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                    }
-
-                    ui.add_space(4.0);
-
-                    // Maximize / Fullscreen (Green) - Double click / Click to toggle Maximize
-                    let (rect, response) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::click());
-                    if ui.is_rect_visible(rect) {
-                        let color = egui::Color32::from_rgb(39, 201, 63);
-                        ui.painter().circle_filled(rect.center(), 6.0, color);
-                    }
-                    if response.clicked() {
-                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
-                    }
-
-                    ui.add_space(16.0);
-                } else {
                     ui.add_space(8.0);
                 }
 
+                // === Workspace Tabs ===
                 let mut to_remove = None;
                 for (idx, workspace) in self.workspaces.iter_mut().enumerate() {
                     let is_active = idx == self.active_workspace_idx;
 
                     if workspace.is_editing_name {
-                        let response =
-                            ui.add(egui::TextEdit::singleline(&mut workspace.name).desired_width(100.0));
-                        if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        let resp = ui.add(egui::TextEdit::singleline(&mut workspace.name).desired_width(100.0));
+                        if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             workspace.is_editing_name = false;
                         }
-                        response.request_focus();
+                        resp.request_focus();
                     } else {
-                        let mut is_close_clicked = false;
-
-                        let tab_color = if is_active {
-                            ctx.style().visuals.window_fill()
+                        // Tab as a simple clickable label with underline
+                        let text_color = if is_active {
+                            ctx.style().visuals.text_color()
+                        } else if is_dark {
+                            egui::Color32::from_gray(120)
                         } else {
-                            ctx.style().visuals.faint_bg_color
+                            egui::Color32::from_gray(130)
                         };
 
-                        let tab_frame = egui::Frame::default()
-                            .fill(tab_color)
-                            .rounding(egui::Rounding {
-                                nw: 12.0,
-                                ne: 12.0,
-                                sw: 0.0,
-                                se: 0.0,
-                            })
-                            .inner_margin(egui::Margin {
-                                left: 16.0,
-                                right: 8.0,
-                                top: 8.0,
-                                bottom: 6.0,
-                            });
+                        let tab_resp = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(&workspace.name).size(12.5).color(text_color)
+                            )
+                            .fill(egui::Color32::TRANSPARENT)
+                            .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
+                            .min_size(egui::vec2(0.0, 28.0))
+                        );
 
-                        let mut close_button_rect = egui::Rect::NOTHING;
-
-                        let tab_response = tab_frame
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(&workspace.name);
-
-                                    ui.add_space(4.0);
-                                    let btn_resp =
-                                        ui.add(egui::Button::new(Icons::CLOSE).fill(egui::Color32::TRANSPARENT).frame(false));
-                                    close_button_rect = btn_resp.rect;
-                                    if btn_resp.clicked() {
-                                        is_close_clicked = true;
-                                    }
-                                });
-                            })
-                            .response;
-
-                        let interact_response =
-                            ui.interact(tab_response.rect, ui.id().with(idx), egui::Sense::click());
-                        if interact_response.clicked() {
-                            if let Some(pos) = interact_response.interact_pointer_pos() {
-                                if close_button_rect.expand(4.0).contains(pos) {
-                                    is_close_clicked = true;
-                                } else {
-                                    self.active_workspace_idx = idx;
-                                }
-                            } else {
-                                self.active_workspace_idx = idx;
-                            }
+                        // Active indicator: accent underline
+                        if is_active {
+                            let r = tab_resp.rect;
+                            ui.painter().hline(
+                                r.left()..=r.right(),
+                                r.bottom(),
+                                egui::Stroke::new(2.0, accent),
+                            );
                         }
 
-                        if interact_response.double_clicked() {
+                        if tab_resp.clicked() {
+                            self.active_workspace_idx = idx;
+                        }
+                        if tab_resp.double_clicked() {
                             workspace.is_editing_name = true;
                         }
 
-                        interact_response.context_menu(|ui| {
+                        // Close on middle-click
+                        if tab_resp.middle_clicked() {
+                            to_remove = Some(idx);
+                        }
+
+                        tab_resp.context_menu(|ui| {
                             if ui.button(format!("{} Rename", Icons::EDIT)).clicked() {
                                 workspace.is_editing_name = true;
                                 ui.close_menu();
                             }
+                            if ui.button(format!("{} Close", Icons::CLOSE)).clicked() {
+                                to_remove = Some(idx);
+                                ui.close_menu();
+                            }
                         });
-
-                        if is_close_clicked {
-                            to_remove = Some(idx);
-                        }
                     }
                 }
 
@@ -218,45 +174,55 @@ impl XTermApp {
                     }
                 }
 
-                ui.add_space(8.0);
-                if ui.button(format!("{} New", Icons::ADD)).clicked() {
-                    let new_idx = self.workspaces.len() + 1;
-                    self.workspaces.push(Workspace::new(&format!("Workspace {}", new_idx), ctx));
+                // New tab button
+                ui.add_space(4.0);
+                if ui.add(
+                    egui::Button::new(egui::RichText::new("+").size(14.0))
+                        .fill(egui::Color32::TRANSPARENT)
+                        .rounding(6.0)
+                        .min_size(egui::vec2(28.0, 28.0))
+                ).on_hover_text("New workspace").clicked() {
+                    let n = self.workspaces.len() + 1;
+                    self.workspaces.push(Workspace::new(&format!("Workspace {}", n), ctx));
                     self.active_workspace_idx = self.workspaces.len() - 1;
                 }
 
+                // Right side buttons
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let is_mac = std::env::consts::OS == "macos";
                     if !is_mac {
-                        ui.add_space(4.0);
-                        if ui.add(egui::Button::new(Icons::CLOSE).fill(egui::Color32::TRANSPARENT).frame(false)).clicked() {
+                        // Windows-style controls
+                        if ui.add(egui::Button::new("✕").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 28.0))).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                        if ui.add(egui::Button::new(Icons::ADD).fill(egui::Color32::TRANSPARENT).frame(false)).clicked() {
-                            let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                        if ui.add(egui::Button::new("□").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 28.0))).clicked() {
+                            let m = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!m));
                         }
-                        if ui.add(egui::Button::new("—").fill(egui::Color32::TRANSPARENT).frame(false)).clicked() {
+                        if ui.add(egui::Button::new("—").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 28.0))).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                         }
-                        ui.add_space(8.0);
+                        ui.add_space(4.0);
                         ui.separator();
-                        ui.add_space(8.0);
                     }
 
-                    // Settings Button -> Spawn SettingsApp floating window
-                    if ui.button(format!("{} Settings", Icons::GEAR)).clicked() {
+                    // Settings
+                    if ui.add(
+                        egui::Button::new(egui::RichText::new(format!("{}", Icons::GEAR)).size(14.0))
+                            .rounding(6.0)
+                            .min_size(egui::vec2(32.0, 28.0))
+                    ).on_hover_text("Settings").clicked() {
                         if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
                             let win_id = uuid::Uuid::new_v4().to_string();
-                            let app = Box::new(SettingsApp);
-                            ws.windows.push(FloatingWindow::new(win_id, app));
+                            ws.windows.push(FloatingWindow::new(win_id, Box::new(SettingsApp)));
                         }
                     }
 
-                    ui.add_space(4.0);
-
-                    // Command Palette Search Button
-                    if ui.button(format!("{} Search (Cmd+P)", Icons::SEARCH)).clicked() {
+                    // Search
+                    if ui.add(
+                        egui::Button::new(egui::RichText::new(format!("{} Search", Icons::SEARCH)).size(12.0))
+                            .rounding(6.0)
+                            .min_size(egui::vec2(0.0, 28.0))
+                    ).on_hover_text("Cmd+P").clicked() {
                         self.palette.toggle();
                     }
                 });
