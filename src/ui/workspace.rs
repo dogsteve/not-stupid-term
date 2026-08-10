@@ -141,13 +141,13 @@ impl Workspace {
                         // Window count
                         let count = self.windows.len();
                         let count_color = if is_dark {
-                            egui::Color32::from_gray(90)
+                            egui::Color32::from_gray(180)
                         } else {
-                            egui::Color32::from_gray(140)
+                            egui::Color32::from_gray(60)
                         };
                         ui.label(
                             egui::RichText::new(format!("{}", count))
-                                .size(11.0)
+                                .size(11.5)
                                 .color(count_color),
                         );
                     });
