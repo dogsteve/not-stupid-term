@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::ui::icons::Icons;
 use crate::ui::window_framework::{WindowAction, WindowApp};
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -54,7 +55,11 @@ impl SshManagerApp {
 
 impl WindowApp for SshManagerApp {
     fn title(&self) -> String {
-        "SSH & SFTP Host Manager".to_string()
+        format!("{} SSH & SFTP Manager", Icons::SERVER)
+    }
+
+    fn window_type(&self) -> &'static str {
+        "ssh_manager"
     }
 
     fn render(

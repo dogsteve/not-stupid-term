@@ -48,6 +48,7 @@ impl CommandPalette {
         let commands = [
             ("Settings", "⚙️", PaletteAction::Command("Settings".to_string())),
             ("New Workspace", "➕", PaletteAction::Command("New Workspace".to_string())),
+            ("New Text File (Notepad)", "📝", PaletteAction::Command("New Notepad".to_string())),
             ("Local Terminal", "💻", PaletteAction::Command("Local Terminal".to_string())),
             ("SSH & SFTP Manager", "🌐", PaletteAction::Command("SSH Manager".to_string())),
             ("Search Commands", "🔍", PaletteAction::Command("Search".to_string())),

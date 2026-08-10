@@ -139,6 +139,16 @@ impl WindowApp for SftpApp {
         format!("{} SFTP Remote Browser", Icons::SERVER)
     }
 
+    fn window_type(&self) -> &'static str {
+        "sftp"
+    }
+
+    fn save_state(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "host": self.host,
+        }))
+    }
+
     fn render(
         &mut self,
         ui: &mut egui::Ui,

@@ -90,6 +90,7 @@ impl Workspace {
 
                                 let items = [
                                     (Icons::TERMINAL, "Local Terminal"),
+                                    (Icons::NOTE, "New Text File (Notepad)"),
                                     (Icons::FOLDER, "File Viewer"),
                                     (Icons::SERVER, "SSH & SFTP Manager"),
                                     (Icons::SERVER, "SFTP Remote Browser"),
@@ -109,6 +110,9 @@ impl Workspace {
                                                 let count = self.windows.len();
                                                 let title = if count == 0 { "zsh".to_string() } else { format!("zsh ({})", count) };
                                                 self.windows.push(FloatingWindow::new(win_id, Box::new(TerminalApp::new_local(title, ctx))));
+                                            }
+                                            "New Text File (Notepad)" => {
+                                                self.windows.push(FloatingWindow::new(win_id, Box::new(EditorApp::new_untitled())));
                                             }
                                             "File Viewer" => {
                                                 self.windows.push(FloatingWindow::new(win_id, Box::new(FileViewerApp::new())));

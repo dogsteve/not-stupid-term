@@ -4,6 +4,7 @@ use crate::models::state::AppState;
 use crate::ui::editor::EditorApp;
 use crate::ui::icons::Icons;
 use crate::ui::palette::CommandPalette;
+use crate::ui::session;
 use crate::ui::settings::{AppConfig, SettingsApp};
 use crate::ui::theme;
 use crate::ui::window_framework::FloatingWindow;
@@ -23,24 +24,24 @@ pub struct XTermApp {
 
 impl XTermApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Apply acrylic/vibrancy effect to the window
-        // Note: window_vibrancy has a z-order bug on macOS with winit 0.30 where it covers the Egui UI.
-        // crate::utils::vibrancy::apply_window_vibrancy(cc);
+        // Try restoring saved session from ~/.config/smart-term/session.json
+        let (workspaces, active_idx, config) = session::load_session(&cc.egui_ctx)
+            .unwrap_or_else(|| {
+                (vec![Workspace::new("Workspace 1", &cc.egui_ctx)], 0, AppConfig::default())
+            });
 
-        theme::apply_theme(&cc.egui_ctx, &AppConfig::default());
-        theme::apply_font(&cc.egui_ctx, &AppConfig::default().font_family);
+        theme::apply_theme(&cc.egui_ctx, &config);
+        theme::apply_font(&cc.egui_ctx, &config.font_family);
 
-        let state = AppState::default();
-
-        let workspaces = vec![Workspace::new("Workspace 1", &cc.egui_ctx)];
+        let font_fam = config.font_family.clone();
 
         Self {
-            state,
+            state: AppState::default(),
             workspaces,
-            active_workspace_idx: 0,
-            config: AppConfig::default(),
+            active_workspace_idx: active_idx,
+            config,
             last_theme_sync: 0.0,
-            current_font: "FiraCode".to_owned(),
+            current_font: font_fam,
             close_warning_workspace: None,
             sys: sysinfo::System::new(),
             palette: CommandPalette::new(),
@@ -55,7 +56,7 @@ impl XTermApp {
         let panel_frame = egui::Frame::default()
             .fill(ctx.style().visuals.panel_fill)
             .inner_margin(egui::Margin {
-                left: 8.0, right: 8.0, top: 6.0, bottom: 0.0,
+                left: 12.0, right: 12.0, top: 8.0, bottom: 8.0,
             })
             .rounding(egui::Rounding {
                 nw: if is_mac { 12.0 } else { 0.0 },
@@ -132,8 +133,6 @@ impl XTermApp {
                         } else {
                             egui::Color32::from_gray(130)
                         };
-
-                        let tab_id = ui.id().with(("tab", idx));
 
                         // Draw tab as a group
                         let tab_resp = ui.horizontal(|ui| {
@@ -214,7 +213,7 @@ impl XTermApp {
                     egui::Button::new(egui::RichText::new("+").size(14.0))
                         .fill(egui::Color32::TRANSPARENT)
                         .rounding(6.0)
-                        .min_size(egui::vec2(28.0, 28.0))
+                        .min_size(egui::vec2(28.0, 26.0))
                 ).on_hover_text("New workspace").clicked() {
                     let n = self.workspaces.len() + 1;
                     self.workspaces.push(Workspace::new(&format!("Workspace {}", n), ctx));
@@ -223,36 +222,42 @@ impl XTermApp {
 
                 // Right side buttons
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(8.0);
+
                     if !is_mac {
                         // Windows-style controls
-                        if ui.add(egui::Button::new("✕").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 28.0))).clicked() {
+                        if ui.add(egui::Button::new("✕").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 26.0))).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                        if ui.add(egui::Button::new("□").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 28.0))).clicked() {
+                        if ui.add(egui::Button::new("□").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 26.0))).clicked() {
                             let m = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
                             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!m));
                         }
-                        if ui.add(egui::Button::new("—").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 28.0))).clicked() {
+                        if ui.add(egui::Button::new("—").fill(egui::Color32::TRANSPARENT).rounding(4.0).min_size(egui::vec2(32.0, 26.0))).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(8.0);
                         ui.separator();
                     }
 
-                    ui.add_space(6.0);
-
                     let btn_border = if is_dark {
-                        egui::Color32::from_white_alpha(20)
+                        egui::Color32::from_white_alpha(30)
                     } else {
-                        egui::Color32::from_black_alpha(15)
+                        egui::Color32::from_black_alpha(25)
+                    };
+                    let btn_fill = if is_dark {
+                        egui::Color32::from_white_alpha(15)
+                    } else {
+                        egui::Color32::from_black_alpha(10)
                     };
 
                     // Settings
                     if ui.add(
                         egui::Button::new(egui::RichText::new(Icons::GEAR).size(14.0))
-                            .rounding(6.0)
+                            .fill(btn_fill)
                             .stroke(egui::Stroke::new(1.0, btn_border))
-                            .min_size(egui::vec2(34.0, 28.0))
+                            .rounding(6.0)
+                            .min_size(egui::vec2(34.0, 26.0))
                     ).on_hover_text("Settings").clicked() {
                         if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
                             let win_id = uuid::Uuid::new_v4().to_string();
@@ -260,14 +265,15 @@ impl XTermApp {
                         }
                     }
 
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
 
                     // Search
                     if ui.add(
                         egui::Button::new(egui::RichText::new(format!("{} Search", Icons::SEARCH)).size(12.0))
-                            .rounding(6.0)
+                            .fill(btn_fill)
                             .stroke(egui::Stroke::new(1.0, btn_border))
-                            .min_size(egui::vec2(0.0, 28.0))
+                            .rounding(6.0)
+                            .min_size(egui::vec2(76.0, 26.0))
                     ).on_hover_text("Cmd+P").clicked() {
                         self.palette.toggle();
                     }
@@ -282,8 +288,11 @@ impl eframe::App for XTermApp {
         egui::Color32::TRANSPARENT.to_normalized_gamma_f32()
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        session::save_session(&self.workspaces, self.active_workspace_idx, &self.config);
+    }
 
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Shortcut Cmd+P or Ctrl+P to trigger file search palette
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::P)) {
             self.palette.toggle();
@@ -303,6 +312,9 @@ impl eframe::App for XTermApp {
             workspace.render(ctx, &mut self.config);
         }
 
+        // Auto-save session periodically so state is always persisted
+        session::save_session(&self.workspaces, self.active_workspace_idx, &self.config);
+
         // Render command palette
         if let Some(action) = self.palette.render(ctx) {
             match action {
@@ -320,6 +332,11 @@ impl eframe::App for XTermApp {
                         if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
                             let win_id = uuid::Uuid::new_v4().to_string();
                             ws.windows.push(FloatingWindow::new(win_id, Box::new(crate::ui::settings::SettingsApp)));
+                        }
+                    } else if cmd == "New Notepad" {
+                        if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
+                            let win_id = uuid::Uuid::new_v4().to_string();
+                            ws.windows.push(FloatingWindow::new(win_id, Box::new(EditorApp::new_untitled())));
                         }
                     } else if cmd == "Local Terminal" {
                         if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {

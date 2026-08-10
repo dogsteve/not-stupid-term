@@ -166,6 +166,10 @@ impl WindowApp for SettingsApp {
         format!("{} Settings", Icons::GEAR)
     }
 
+    fn window_type(&self) -> &'static str {
+        "settings"
+    }
+
     fn default_size(&self) -> [f32; 2] {
         [900.0, 620.0]
     }

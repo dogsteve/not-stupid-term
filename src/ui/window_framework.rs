@@ -24,6 +24,14 @@ pub trait WindowApp {
     fn default_size(&self) -> [f32; 2] {
         [700.0, 480.0]
     }
+
+    fn window_type(&self) -> &'static str {
+        "unknown"
+    }
+
+    fn save_state(&self) -> Option<serde_json::Value> {
+        None
+    }
 }
 
 pub struct FloatingWindow {

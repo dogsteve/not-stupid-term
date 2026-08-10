@@ -7,6 +7,7 @@ pub mod highlighter;
 pub mod icons;
 pub mod palette;
 pub mod settings;
+pub mod session;
 pub mod sftp_app;
 pub mod ssh_manager;
 pub mod terminal_app;

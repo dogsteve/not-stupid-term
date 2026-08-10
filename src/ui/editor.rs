@@ -9,6 +9,7 @@ pub struct EditorApp {
     pub original_content: String,
     pub is_dirty: bool,
     pub preview_mode: bool,
+    pub save_status: Option<String>,
 }
 
 impl EditorApp {
@@ -21,18 +22,58 @@ impl EditorApp {
             content,
             is_dirty: false,
             preview_mode: is_md,
+            save_status: None,
         })
+    }
+
+    pub fn new_untitled() -> Self {
+        Self {
+            path: "Untitled.txt".to_string(),
+            content: String::new(),
+            original_content: String::new(),
+            is_dirty: false,
+            preview_mode: false,
+            save_status: None,
+        }
+    }
+
+    pub fn new_untitled_with_content(path: &str, content: &str) -> Self {
+        let p = if path.is_empty() { "Untitled.txt" } else { path };
+        let is_md = p.ends_with(".md") || p.ends_with(".markdown");
+        Self {
+            path: p.to_string(),
+            original_content: content.to_string(),
+            content: content.to_string(),
+            is_dirty: false,
+            preview_mode: is_md,
+            save_status: None,
+        }
     }
 }
 
 impl WindowApp for EditorApp {
     fn title(&self) -> String {
-        let file_name = std::path::Path::new(&self.path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&self.path);
-        let icon = Icons::get_file_icon(&self.path);
-        format!("{} {}", icon, file_name)
+        if self.path.is_empty() || self.path == "Untitled.txt" {
+            format!("{} Notepad (Untitled)", Icons::NOTE)
+        } else {
+            let file_name = std::path::Path::new(&self.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&self.path);
+            let icon = Icons::get_file_icon(&self.path);
+            format!("{} {}", icon, file_name)
+        }
+    }
+
+    fn window_type(&self) -> &'static str {
+        "editor"
+    }
+
+    fn save_state(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "path": self.path,
+            "content": self.content,
+        }))
     }
 
     fn render(
@@ -45,28 +86,49 @@ impl WindowApp for EditorApp {
 
         // TOP EDITOR TOOLBAR
         ui.horizontal(|ui| {
-            let file_name = std::path::Path::new(&self.path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(&self.path);
-
             let icon = Icons::get_file_icon(&self.path);
-            ui.heading(egui::RichText::new(format!("{} {}", icon, file_name)).size(15.0).strong());
+            ui.label(egui::RichText::new(icon).size(15.0));
+
+            // Editable path field
+            let path_resp = ui.add(
+                egui::TextEdit::singleline(&mut self.path)
+                    .desired_width(180.0)
+                    .font(egui::FontId::monospace(12.0))
+            );
+            if path_resp.changed() {
+                self.is_dirty = true;
+            }
 
             if self.is_dirty {
                 ui.label(egui::RichText::new("• Modified").color(egui::Color32::GOLD).size(11.0));
             }
 
+            if let Some(ref status) = self.save_status {
+                ui.label(egui::RichText::new(status).color(egui::Color32::GREEN).size(11.0));
+            }
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Save button
-                let save_btn = ui.add_enabled(
-                    self.is_dirty,
-                    egui::Button::new(format!("{} Save", Icons::SAVE)).fill(egui::Color32::from_rgb(40, 140, 240)),
+                let save_btn = ui.add(
+                    egui::Button::new(format!("{} Save", Icons::SAVE))
+                        .fill(egui::Color32::from_rgb(40, 140, 240))
+                        .rounding(6.0)
                 );
+
                 if save_btn.clicked() {
-                    if fs::write(&self.path, &self.content).is_ok() {
+                    let target_path = if self.path.trim().is_empty() {
+                        "Untitled.txt".to_string()
+                    } else {
+                        self.path.trim().to_string()
+                    };
+                    self.path = target_path.clone();
+
+                    if fs::write(&target_path, &self.content).is_ok() {
                         self.original_content = self.content.clone();
                         self.is_dirty = false;
+                        self.save_status = Some("Saved!".to_string());
+                    } else {
+                        self.save_status = Some("Error saving".to_string());
                     }
                 }
 
@@ -95,8 +157,8 @@ impl WindowApp for EditorApp {
             .inner_margin(4.0)
             .show(ui, |ui| {
                 egui::ScrollArea::both()
-                    .auto_shrink([false, false]) // Pinned flush right & bottom!
-                    .id_salt("editor_scroll")
+                    .auto_shrink([false, false])
+                    .id_salt(ui.id().with("editor_scroll"))
                     .show(ui, |ui| {
                         ui.set_min_size(avail);
                         if self.preview_mode {

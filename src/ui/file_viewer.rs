@@ -46,6 +46,10 @@ impl WindowApp for FileViewerApp {
         format!("{} File Viewer", Icons::FOLDER)
     }
 
+    fn window_type(&self) -> &'static str {
+        "file_viewer"
+    }
+
     fn render(
         &mut self,
         ui: &mut egui::Ui,

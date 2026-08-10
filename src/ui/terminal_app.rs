@@ -190,6 +190,17 @@ impl WindowApp for TerminalApp {
         format!("{} {}", Icons::TERMINAL, self.title)
     }
 
+    fn window_type(&self) -> &'static str {
+        "terminal"
+    }
+
+    fn save_state(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({
+            "title": self.title,
+            "command_history": self.command_history,
+        }))
+    }
+
     fn render(
         &mut self,
         ui: &mut egui::Ui,
