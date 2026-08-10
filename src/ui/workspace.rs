@@ -32,66 +32,119 @@ impl Workspace {
     }
 
     pub fn render(&mut self, ctx: &egui::Context, config: &mut crate::ui::settings::AppConfig) {
-        let is_mac = std::env::consts::OS == "macos";
-        let window_rounding = if is_mac { 12.0 } else { 8.0 };
+        let is_dark = ctx.style().visuals.dark_mode;
+
+        // Fluent workspace background with subtle noise-like texture via layered fills
+        let workspace_bg = if is_dark {
+            egui::Color32::from_rgb(18, 18, 22)
+        } else {
+            egui::Color32::from_rgb(243, 243, 246)
+        };
 
         let frame = egui::Frame::default()
-            .fill(ctx.style().visuals.window_fill())
+            .fill(workspace_bg)
             .rounding(egui::Rounding {
                 nw: 0.0,
                 ne: 0.0,
-                sw: window_rounding,
-                se: window_rounding,
+                sw: 12.0,
+                se: 12.0,
             });
 
         let mut actions = Vec::new();
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                // Single unified dropdown button with real icons
-                let btn_text = format!("{} Spawn Window...", Icons::ADD);
-                ui.menu_button(btn_text, |ui| {
-                    if ui.button(format!("{} Local Terminal", Icons::TERMINAL)).clicked() {
-                        let win_id = Uuid::new_v4().to_string();
-                        let count = self.windows.len();
-                        let title = if count == 0 { "zsh".to_string() } else { format!("zsh ({})", count) };
-                        let app = Box::new(TerminalApp::new_local(title, ctx));
-                        self.windows.push(FloatingWindow::new(win_id, app));
-                        ui.close_menu();
-                    }
+            // Fluent-style action bar at the top
+            let bar_bg = if is_dark {
+                egui::Color32::from_rgba_premultiplied(255, 255, 255, 6)
+            } else {
+                egui::Color32::from_rgba_premultiplied(0, 0, 0, 8)
+            };
 
-                    if ui.button(format!("{} File Viewer", Icons::FOLDER)).clicked() {
-                        let win_id = Uuid::new_v4().to_string();
-                        let app = Box::new(FileViewerApp::new());
-                        self.windows.push(FloatingWindow::new(win_id, app));
-                        ui.close_menu();
-                    }
+            let bar_frame = egui::Frame::default()
+                .fill(bar_bg)
+                .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                .rounding(8.0);
 
-                    if ui.button(format!("{} SSH & SFTP Manager", Icons::SERVER)).clicked() {
-                        let win_id = Uuid::new_v4().to_string();
-                        let app = Box::new(SshManagerApp::new());
-                        self.windows.push(FloatingWindow::new(win_id, app));
-                        ui.close_menu();
-                    }
+            bar_frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let btn_text_color = if is_dark {
+                        egui::Color32::from_gray(200)
+                    } else {
+                        egui::Color32::from_gray(50)
+                    };
 
-                    if ui.button(format!("{} SFTP Remote Browser", Icons::SERVER)).clicked() {
-                        let win_id = Uuid::new_v4().to_string();
-                        let app = Box::new(SftpApp::new());
-                        self.windows.push(FloatingWindow::new(win_id, app));
-                        ui.close_menu();
-                    }
+                    // Dropdown spawn menu
+                    ui.menu_button(
+                        egui::RichText::new(format!("{} New", Icons::ADD))
+                            .size(12.0)
+                            .color(btn_text_color),
+                        |ui| {
+                            ui.set_min_width(200.0);
 
-                    if ui.button(format!("{} Settings", Icons::GEAR)).clicked() {
-                        let win_id = Uuid::new_v4().to_string();
-                        let app = Box::new(SettingsApp);
-                        self.windows.push(FloatingWindow::new(win_id, app));
-                        ui.close_menu();
-                    }
+                            let items = [
+                                (Icons::TERMINAL, "Local Terminal"),
+                                (Icons::FOLDER, "File Viewer"),
+                                (Icons::SERVER, "SSH & SFTP Manager"),
+                                (Icons::SERVER, "SFTP Remote Browser"),
+                                (Icons::GEAR, "Settings"),
+                            ];
+
+                            for (icon, label) in items {
+                                let item_text = format!("{} {}", icon, label);
+                                if ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(&item_text).size(12.0),
+                                    )
+                                    .fill(egui::Color32::TRANSPARENT)
+                                    .min_size(egui::vec2(ui.available_width(), 28.0)),
+                                ).clicked() {
+                                    let win_id = Uuid::new_v4().to_string();
+                                    match label {
+                                        "Local Terminal" => {
+                                            let count = self.windows.len();
+                                            let title = if count == 0 { "zsh".to_string() } else { format!("zsh ({})", count) };
+                                            self.windows.push(FloatingWindow::new(win_id, Box::new(TerminalApp::new_local(title, ctx))));
+                                        }
+                                        "File Viewer" => {
+                                            self.windows.push(FloatingWindow::new(win_id, Box::new(FileViewerApp::new())));
+                                        }
+                                        "SSH & SFTP Manager" => {
+                                            self.windows.push(FloatingWindow::new(win_id, Box::new(SshManagerApp::new())));
+                                        }
+                                        "SFTP Remote Browser" => {
+                                            self.windows.push(FloatingWindow::new(win_id, Box::new(SftpApp::new())));
+                                        }
+                                        "Settings" => {
+                                            self.windows.push(FloatingWindow::new(win_id, Box::new(SettingsApp)));
+                                        }
+                                        _ => {}
+                                    }
+                                    ui.close_menu();
+                                }
+                            }
+                        },
+                    );
+
+                    // Window count indicator
+                    ui.add_space(8.0);
+                    let count = self.windows.len();
+                    let count_color = if is_dark {
+                        egui::Color32::from_gray(80)
+                    } else {
+                        egui::Color32::from_gray(160)
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("{} windows", count))
+                            .size(11.0)
+                            .color(count_color),
+                    );
                 });
             });
+
+            ui.add_space(2.0);
         });
 
-        // Render all generic floating windows
+        // Render floating windows
         for window in self.windows.iter_mut() {
             if let Some(act) = window.render(ctx, config) {
                 actions.push(act);
@@ -101,24 +154,21 @@ impl Workspace {
         // Remove closed windows
         self.windows.retain(|w| w.is_open);
 
-        // Process window actions (SSH connections, SFTP sessions, or opening files)
+        // Process window actions
         for act in actions {
             match act {
                 WindowAction::ConnectSsh(cmd) => {
                     let win_id = Uuid::new_v4().to_string();
-                    let app = Box::new(TerminalApp::new_ssh("SSH Session", cmd, ctx));
-                    self.windows.push(FloatingWindow::new(win_id, app));
+                    self.windows.push(FloatingWindow::new(win_id, Box::new(TerminalApp::new_ssh("SSH Session", cmd, ctx))));
                 }
                 WindowAction::OpenSftp(host) => {
                     let win_id = Uuid::new_v4().to_string();
-                    let app = Box::new(SftpApp::with_host(host));
-                    self.windows.push(FloatingWindow::new(win_id, app));
+                    self.windows.push(FloatingWindow::new(win_id, Box::new(SftpApp::with_host(host))));
                 }
                 WindowAction::OpenFile(path) => {
                     if let Ok(editor) = EditorApp::open(&path) {
                         let win_id = Uuid::new_v4().to_string();
-                        let app = Box::new(editor);
-                        self.windows.push(FloatingWindow::new(win_id, app));
+                        self.windows.push(FloatingWindow::new(win_id, Box::new(editor)));
                     }
                 }
             }

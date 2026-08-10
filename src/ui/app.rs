@@ -30,18 +30,6 @@ impl XTermApp {
         theme::apply_theme(&cc.egui_ctx, &AppConfig::default());
         theme::apply_font(&cc.egui_ctx, &AppConfig::default().font_family);
 
-        // Load Fira Code font
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "FiraCode".to_owned(),
-            egui::FontData::from_static(include_bytes!(
-                "../../assets/fonts/FiraCode-Regular.ttf"
-            )),
-        );
-        fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "FiraCode".to_owned());
-        fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "FiraCode".to_owned());
-        cc.egui_ctx.set_fonts(fonts);
-
         let state = AppState::default();
 
         let workspaces = vec![Workspace::new("Workspace 1", &cc.egui_ctx)];

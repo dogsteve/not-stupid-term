@@ -4,7 +4,7 @@ use crate::ui::settings::AppTheme;
 
 pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig) {
     let is_dark = match config.theme {
-        AppTheme::DefaultLight | AppTheme::SolarizedLight => false,
+        AppTheme::DefaultLight | AppTheme::SolarizedLight | AppTheme::GruvboxLight | AppTheme::AyuLight | AppTheme::SnazzyLight => false,
         _ => true,
     };
 
@@ -42,12 +42,34 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
         AppTheme::SynthWave84 => ((38, 35, 53), (25, 21, 38), (255, 255, 255), (255, 126, 219)),
         AppTheme::Cyberpunk => ((26, 9, 35), (16, 5, 21), (255, 239, 13), (0, 255, 153)),
         AppTheme::RosePine => ((25, 23, 36), (31, 29, 46), (224, 222, 244), (235, 188, 186)),
+        AppTheme::Everforest => ((43, 51, 57), (30, 35, 38), (211, 198, 170), (167, 192, 128)),
+        AppTheme::Kanagawa => ((31, 31, 40), (22, 22, 29), (220, 215, 186), (126, 156, 216)),
+        AppTheme::Nightfox => ((25, 35, 48), (17, 24, 39), (205, 214, 244), (113, 156, 214)),
+        AppTheme::Moonlight => ((34, 36, 54), (30, 32, 48), (200, 208, 224), (130, 170, 255)),
+        AppTheme::VitesseDark => ((18, 18, 18), (24, 24, 24), (219, 219, 219), (77, 147, 117)),
+        AppTheme::Horizon => ((28, 30, 38), (21, 23, 29), (213, 216, 218), (229, 192, 123)),
+        AppTheme::Poimandres => ((27, 30, 40), (23, 25, 34), (166, 172, 205), (93, 238, 214)),
+        AppTheme::BlulocoDark => ((40, 44, 52), (33, 37, 43), (171, 178, 191), (97, 175, 239)),
+        AppTheme::ChallengerDeep => ((30, 28, 49), (20, 19, 34), (198, 200, 209), (145, 221, 255)),
+        AppTheme::SnazzyLight => ((250, 251, 252), (243, 244, 246), (56, 58, 66), (255, 92, 87)),
+        AppTheme::WinterIsComing => ((1, 22, 39), (1, 19, 33), (214, 222, 235), (126, 206, 253)),
+        AppTheme::Vesper => ((16, 16, 16), (10, 10, 10), (200, 200, 200), (255, 120, 100)),
     };
 
     visuals.window_fill = egui::Color32::from_rgba_unmultiplied(bg.0, bg.1, bg.2, alpha);
     visuals.panel_fill = egui::Color32::from_rgba_unmultiplied(panel_bg.0, panel_bg.1, panel_bg.2, alpha);
     visuals.override_text_color = Some(egui::Color32::from_rgb(text.0, text.1, text.2));
     visuals.selection.bg_fill = egui::Color32::from_rgb(accent.0, accent.1, accent.2);
+    
+    let dark_factor = if is_dark { 5 } else { 0 };
+    visuals.extreme_bg_color = egui::Color32::from_rgba_unmultiplied(panel_bg.0.saturating_sub(dark_factor), panel_bg.1.saturating_sub(dark_factor), panel_bg.2.saturating_sub(dark_factor), alpha);
+    let light_factor = if is_dark { 10 } else { 0 };
+    visuals.faint_bg_color = egui::Color32::from_rgba_unmultiplied(bg.0.saturating_add(light_factor), bg.1.saturating_add(light_factor), bg.2.saturating_add(light_factor), alpha);
+    
+    visuals.widgets.noninteractive.bg_fill = visuals.panel_fill;
+    visuals.widgets.inactive.bg_fill = visuals.faint_bg_color;
+    visuals.widgets.hovered.bg_fill = visuals.selection.bg_fill.linear_multiply(0.3);
+    visuals.widgets.active.bg_fill = visuals.selection.bg_fill.linear_multiply(0.5);
 
     visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(if is_dark { 45 } else { 200 }));
 

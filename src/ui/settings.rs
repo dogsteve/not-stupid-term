@@ -29,6 +29,18 @@ pub enum AppTheme {
     SynthWave84,
     Cyberpunk,
     RosePine,
+    Everforest,
+    Kanagawa,
+    Nightfox,
+    Moonlight,
+    VitesseDark,
+    Horizon,
+    Poimandres,
+    BlulocoDark,
+    ChallengerDeep,
+    SnazzyLight,
+    WinterIsComing,
+    Vesper,
 }
 
 impl Default for AppTheme {
@@ -65,6 +77,18 @@ impl AppTheme {
             Self::SynthWave84 => ("SynthWave '84", "[SW]"),
             Self::Cyberpunk => ("Cyberpunk", "[CP]"),
             Self::RosePine => ("Rosé Pine", "[RP]"),
+            Self::Everforest => ("Everforest", "[EF]"),
+            Self::Kanagawa => ("Kanagawa", "[KG]"),
+            Self::Nightfox => ("Nightfox", "[NF]"),
+            Self::Moonlight => ("Moonlight", "[ML]"),
+            Self::VitesseDark => ("Vitesse Dark", "[VD]"),
+            Self::Horizon => ("Horizon", "[HZ]"),
+            Self::Poimandres => ("Poimandres", "[PM]"),
+            Self::BlulocoDark => ("Bluloco Dark", "[BD]"),
+            Self::ChallengerDeep => ("Challenger Deep", "[CD]"),
+            Self::SnazzyLight => ("Snazzy Light", "[SL]"),
+            Self::WinterIsComing => ("Winter Is Coming", "[WC]"),
+            Self::Vesper => ("Vesper", "[VS]"),
         }
     }
 }
@@ -82,6 +106,10 @@ pub struct AppConfig {
     pub auto_refocus: bool,
     pub tab_size: usize,
     pub show_line_numbers: bool,
+    pub mcp_port: u16,
+    pub mcp_enabled: bool,
+    pub mcp_auto_start: bool,
+    pub mcp_api_key: String,
 }
 
 impl Default for AppConfig {
@@ -98,6 +126,10 @@ impl Default for AppConfig {
             auto_refocus: true,
             tab_size: 4,
             show_line_numbers: true,
+            mcp_port: 3000,
+            mcp_enabled: true,
+            mcp_auto_start: true,
+            mcp_api_key: String::new(),
         }
     }
 }
@@ -144,6 +176,10 @@ impl WindowApp for SettingsApp {
                         if ui.add(egui::SelectableLabel::new(active_tab == 3, "📝 Code Editor")).clicked() {
                             active_tab = 3;
                         }
+                        ui.add_space(4.0);
+                        if ui.add(egui::SelectableLabel::new(active_tab == 4, "🌐 MCP Server")).clicked() {
+                            active_tab = 4;
+                        }
                     });
 
                     ui.separator();
@@ -173,15 +209,35 @@ impl WindowApp for SettingsApp {
                                             ui.label("Font Family:");
                                             egui::ComboBox::from_id_salt("font_family")
                                                 .selected_text(&config.font_family)
+                                                .width(200.0)
                                                 .show_ui(ui, |ui| {
-                                                    ui.selectable_value(&mut config.font_family, "System Default".to_string(), "System Default");
-                                                    ui.selectable_value(&mut config.font_family, "JetBrains Mono".to_string(), "JetBrains Mono");
-                                                    ui.selectable_value(&mut config.font_family, "Fira Code".to_string(), "Fira Code");
+                                                    let fonts = [
+                                                        "System Default",
+                                                        "Fira Code",
+                                                        "JetBrains Mono",
+                                                        "Menlo",
+                                                        "Monaco",
+                                                        "SF Mono",
+                                                        "Cascadia Code",
+                                                        "Inconsolata",
+                                                        "Source Code Pro",
+                                                        "IBM Plex Mono",
+                                                        "Hack",
+                                                        "Consolas",
+                                                    ];
+                                                    for font in fonts {
+                                                        ui.selectable_value(&mut config.font_family, font.to_string(), font);
+                                                    }
                                                 });
                                             ui.end_row();
 
                                             ui.label("Font Size:");
-                                            ui.add(egui::Slider::new(&mut config.font_size, 10.0..=32.0).suffix(" px"));
+                                            ui.horizontal(|ui| {
+                                                ui.add(egui::Slider::new(&mut config.font_size, 8.0..=36.0).suffix(" px").step_by(1.0));
+                                                if ui.small_button("⟳").on_hover_text("Reset to 12px").clicked() {
+                                                    config.font_size = 12.0;
+                                                }
+                                            });
                                             ui.end_row();
 
                                             ui.label("Background Transparency:");
@@ -192,6 +248,38 @@ impl WindowApp for SettingsApp {
                                             ui.add(egui::Slider::new(&mut config.window_rounding, 0.0..=24.0).suffix(" px"));
                                             ui.end_row();
                                         });
+
+                                    ui.add_space(12.0);
+                                    ui.separator();
+                                    ui.add_space(8.0);
+
+                                    // Live font preview
+                                    ui.label(egui::RichText::new("Preview:").size(12.0).color(
+                                        if is_dark { egui::Color32::from_gray(120) } else { egui::Color32::from_gray(160) }
+                                    ));
+                                    ui.add_space(4.0);
+                                    let preview_frame = egui::Frame::default()
+                                        .fill(if is_dark { egui::Color32::from_gray(20) } else { egui::Color32::from_gray(245) })
+                                        .rounding(6.0)
+                                        .inner_margin(12.0);
+                                    preview_frame.show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new("❯ echo \"Hello, Smart Terminal!\"")
+                                                .family(egui::FontFamily::Monospace)
+                                                .size(config.font_size),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new("Hello, Smart Terminal!")
+                                                .family(egui::FontFamily::Monospace)
+                                                .size(config.font_size),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new("0O 1lI {} [] () <> => != ++ --")
+                                                .family(egui::FontFamily::Monospace)
+                                                .size(config.font_size)
+                                                .color(if is_dark { egui::Color32::from_gray(100) } else { egui::Color32::from_gray(160) }),
+                                        );
+                                    });
                                 });
                             }
                             1 => {
@@ -236,11 +324,23 @@ impl WindowApp for SettingsApp {
                                         AppTheme::SynthWave84,
                                         AppTheme::Cyberpunk,
                                         AppTheme::RosePine,
+                                        AppTheme::Everforest,
+                                        AppTheme::Kanagawa,
+                                        AppTheme::Nightfox,
+                                        AppTheme::Moonlight,
+                                        AppTheme::VitesseDark,
+                                        AppTheme::Horizon,
+                                        AppTheme::Poimandres,
+                                        AppTheme::BlulocoDark,
+                                        AppTheme::ChallengerDeep,
+                                        AppTheme::SnazzyLight,
+                                        AppTheme::WinterIsComing,
+                                        AppTheme::Vesper,
                                     ];
 
                                     egui::ScrollArea::vertical()
                                         .id_salt("theme_list_scroll")
-                                        .max_height(250.0)
+                                        .auto_shrink([false, false])
                                         .show(ui, |ui| {
                                             ui.vertical(|ui| {
                                                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
@@ -343,6 +443,33 @@ impl WindowApp for SettingsApp {
 
                                             ui.label("Show Line Numbers:");
                                             ui.checkbox(&mut config.show_line_numbers, "Enable");
+                                            ui.end_row();
+                                        });
+                                });
+                            }
+                            4 => {
+                                ui.heading(egui::RichText::new("MCP Server Settings").size(16.0).strong());
+                                ui.add_space(10.0);
+
+                                card_frame.show(ui, |ui| {
+                                    egui::Grid::new("mcp_grid")
+                                        .num_columns(2)
+                                        .spacing([16.0, 12.0])
+                                        .show(ui, |ui| {
+                                            ui.label("MCP Server Enabled:");
+                                            ui.checkbox(&mut config.mcp_enabled, "Enable");
+                                            ui.end_row();
+
+                                            ui.label("Auto-start on Launch:");
+                                            ui.checkbox(&mut config.mcp_auto_start, "Auto-start");
+                                            ui.end_row();
+
+                                            ui.label("Server Port:");
+                                            ui.add(egui::Slider::new(&mut config.mcp_port, 1024..=65535).text("Port"));
+                                            ui.end_row();
+
+                                            ui.label("API Key:");
+                                            ui.add(egui::TextEdit::singleline(&mut config.mcp_api_key).password(true));
                                             ui.end_row();
                                         });
                                 });

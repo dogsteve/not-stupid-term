@@ -3,7 +3,6 @@ use eframe::egui;
 use crate::core::pty::PtySession;
 use crate::ui::alias;
 use crate::ui::icons::Icons;
-use crate::ui::settings::AppTheme;
 use crate::ui::window_framework::{WindowAction, WindowApp};
 
 /// A single command block in the notebook. Stores raw PTY bytes.
@@ -253,11 +252,7 @@ impl WindowApp for TerminalApp {
         }
 
         // === Theme colors ===
-        let is_dark = match config.theme {
-            AppTheme::DefaultLight | AppTheme::SolarizedLight
-            | AppTheme::GruvboxLight | AppTheme::AyuLight => false,
-            _ => true,
-        };
+        let is_dark = _ctx.style().visuals.dark_mode;
         let text_color = if is_dark {
             egui::Color32::from_rgb(210, 210, 210)
         } else {
@@ -493,6 +488,10 @@ impl WindowApp for TerminalApp {
                             continue;
                         }
 
+                        // === Block container with hover highlight ===
+                        let block_id = ui.id().with(("block", i));
+                        let block_start = ui.cursor().min;
+
                         // Command header
                         if !block.command.is_empty() {
                             let mut job = egui::text::LayoutJob::default();
@@ -507,7 +506,6 @@ impl WindowApp for TerminalApp {
                                 ..Default::default()
                             });
 
-                            // Show status indicator
                             if is_active {
                                 job.append("  ⏳", 0.0, egui::TextFormat {
                                     font_id: font_id.clone(),
@@ -536,13 +534,29 @@ impl WindowApp for TerminalApp {
                             );
                         }
 
-                        // Separator between blocks
+                        // Calculate block rect and draw hover highlight BEHIND content
+                        let block_end = ui.cursor().min;
+                        let block_rect = egui::Rect::from_min_max(
+                            egui::pos2(ui.min_rect().left(), block_start.y),
+                            egui::pos2(ui.min_rect().right(), block_end.y),
+                        );
+                        let block_resp = ui.interact(block_rect, block_id, egui::Sense::hover());
+                        if block_resp.hovered() {
+                            let hover_color = if is_dark {
+                                egui::Color32::from_white_alpha(8)
+                            } else {
+                                egui::Color32::from_black_alpha(8)
+                            };
+                            ui.painter().rect_filled(block_rect.expand2(egui::vec2(4.0, 2.0)), 4.0, hover_color);
+                        }
+
+                        // Separator
                         ui.add_space(6.0);
                         let sep_rect = ui.available_rect_before_wrap();
                         ui.painter().hline(
                             sep_rect.x_range(),
                             sep_rect.top(),
-                            egui::Stroke::new(1.0, separator_color),
+                            egui::Stroke::new(0.5, separator_color),
                         );
                         ui.add_space(6.0);
                     }
