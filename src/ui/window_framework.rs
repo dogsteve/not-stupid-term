@@ -1,4 +1,5 @@
 use eframe::egui;
+use super::icons::Icons;
 
 pub enum WindowAction {
     ConnectSsh(String),
@@ -167,7 +168,7 @@ impl FloatingWindow {
                             };
                             let close_btn = ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new("✕").size(12.0).color(close_color),
+                                    egui::RichText::new(Icons::CLOSE).size(11.0).color(close_color),
                                 )
                                 .fill(egui::Color32::TRANSPARENT)
                                 .rounding(4.0)
