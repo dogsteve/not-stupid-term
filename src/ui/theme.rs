@@ -105,18 +105,6 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
 pub fn apply_font(ctx: &egui::Context, font_family: &str) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Register SymbolsNerdFont (Primary 10,000+ Icon Pack)
-    fonts.font_data.insert(
-        "nerdfont".to_owned(),
-        egui::FontData::from_static(include_bytes!("../../assets/fonts/SymbolsNerdFont-Regular.ttf")),
-    );
-
-    // Register Codicons font asset as backup
-    fonts.font_data.insert(
-        "codicon".to_owned(),
-        egui::FontData::from_static(include_bytes!("../../assets/fonts/codicon.ttf")),
-    );
-
     match font_family {
         "JetBrains Mono" => {
             fonts.font_data.insert(
@@ -126,7 +114,7 @@ pub fn apply_font(ctx: &egui::Context, font_family: &str) {
             fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "JetBrainsMono".to_owned());
             fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "JetBrainsMono".to_owned());
         }
-        "Fira Code" => {
+        "Fira Code" | _ => {
             fonts.font_data.insert(
                 "FiraCode".to_owned(),
                 egui::FontData::from_static(include_bytes!("../../assets/FiraCode-Regular.ttf")),
@@ -134,14 +122,7 @@ pub fn apply_font(ctx: &egui::Context, font_family: &str) {
             fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "FiraCode".to_owned());
             fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "FiraCode".to_owned());
         }
-        _ => {}
     }
-
-    // Insert Nerd Font at index 0 so egui ALWAYS resolves icon glyphs using SymbolsNerdFont-Regular.ttf!
-    fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "nerdfont".to_owned());
-    fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "nerdfont".to_owned());
-    fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().push("codicon".to_owned());
-    fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().push("codicon".to_owned());
 
     ctx.set_fonts(fonts);
 }
