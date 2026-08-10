@@ -239,11 +239,20 @@ impl XTermApp {
                         ui.separator();
                     }
 
+                    ui.add_space(6.0);
+
+                    let btn_border = if is_dark {
+                        egui::Color32::from_white_alpha(20)
+                    } else {
+                        egui::Color32::from_black_alpha(15)
+                    };
+
                     // Settings
                     if ui.add(
-                        egui::Button::new(egui::RichText::new(format!("{}", Icons::GEAR)).size(14.0))
+                        egui::Button::new(egui::RichText::new(Icons::GEAR).size(14.0))
                             .rounding(6.0)
-                            .min_size(egui::vec2(32.0, 28.0))
+                            .stroke(egui::Stroke::new(1.0, btn_border))
+                            .min_size(egui::vec2(34.0, 28.0))
                     ).on_hover_text("Settings").clicked() {
                         if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
                             let win_id = uuid::Uuid::new_v4().to_string();
@@ -251,10 +260,13 @@ impl XTermApp {
                         }
                     }
 
+                    ui.add_space(4.0);
+
                     // Search
                     if ui.add(
                         egui::Button::new(egui::RichText::new(format!("{} Search", Icons::SEARCH)).size(12.0))
                             .rounding(6.0)
+                            .stroke(egui::Stroke::new(1.0, btn_border))
                             .min_size(egui::vec2(0.0, 28.0))
                     ).on_hover_text("Cmd+P").clicked() {
                         self.palette.toggle();

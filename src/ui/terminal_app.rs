@@ -54,17 +54,35 @@ impl NotebookBlock {
         let text = parser.screen().contents();
         let mut trimmed = text.trim_end().to_string();
 
-        // Strip echoed command from first line (PTY echoes what we type)
+        // Strip echoed command from output (PTY echoes what we type)
         if !self.command.is_empty() {
-            if let Some(first_newline) = trimmed.find('\n') {
-                let first_line = trimmed[..first_newline].trim();
-                if first_line == self.command.trim() {
-                    trimmed = trimmed[first_newline + 1..].to_string();
+            let cmd_trimmed = self.command.trim();
+
+            // Try to strip echo line(s) from the beginning
+            let mut lines: Vec<&str> = trimmed.lines().collect();
+            let mut stripped = 0;
+
+            // Strip leading lines that match the echoed command
+            while !lines.is_empty() {
+                let line = lines[0].trim();
+                // Match: exact command, or with prompt prefix (❯, >, $, %), or "command\r"
+                let clean = line
+                    .trim_start_matches(|c: char| "❯>$%#→▶ ".contains(c))
+                    .trim();
+                if clean == cmd_trimmed
+                    || clean.starts_with(&format!("{}\r", cmd_trimmed))
+                    || (line.contains(cmd_trimmed) && line.len() < cmd_trimmed.len() + 15)
+                {
+                    lines.remove(0);
+                    stripped += 1;
+                    // Only strip up to 2 echo lines max
+                    if stripped >= 2 { break; }
+                } else {
+                    break;
                 }
-            } else if trimmed.trim() == self.command.trim() {
-                // Entire output is just the echoed command
-                trimmed = String::new();
             }
+
+            trimmed = lines.join("\n");
         }
 
         // Strip trailing prompt remnants (lines that are just whitespace + prompt chars)
