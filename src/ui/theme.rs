@@ -200,6 +200,12 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
 pub fn apply_font(ctx: &egui::Context, font_family: &str) {
     let mut fonts = egui::FontDefinitions::default();
 
+    // Register Phosphor Icons font for UI icons (PUA glyphs)
+    fonts.font_data.insert(
+        "phosphor".to_owned(),
+        egui::FontData::from_static(include_bytes!("../../assets/fonts/Phosphor.ttf")),
+    );
+
     match font_family {
         "JetBrains Mono" => {
             fonts.font_data.insert(
@@ -218,6 +224,10 @@ pub fn apply_font(ctx: &egui::Context, font_family: &str) {
             fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "FiraCode".to_owned());
         }
     }
+
+    // Append Phosphor as fallback so icon glyphs resolve
+    fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().push("phosphor".to_owned());
+    fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().push("phosphor".to_owned());
 
     ctx.set_fonts(fonts);
 }
