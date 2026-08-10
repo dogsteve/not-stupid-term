@@ -53,91 +53,104 @@ impl Workspace {
         let mut actions = Vec::new();
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-            // Fluent-style action bar at the top
-            let bar_bg = if is_dark {
-                egui::Color32::from_rgba_premultiplied(255, 255, 255, 6)
-            } else {
-                egui::Color32::from_rgba_premultiplied(0, 0, 0, 8)
-            };
+            ui.add_space(8.0);
 
-            let bar_frame = egui::Frame::default()
-                .fill(bar_bg)
-                .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                .rounding(8.0);
+            // Floating action buttons — centered pill with proper margin
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
 
-            bar_frame.show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let btn_text_color = if is_dark {
-                        egui::Color32::from_gray(200)
+                let accent = ui.style().visuals.selection.bg_fill;
+
+                // "+ New" dropdown button — floating pill style
+                let btn_bg = if is_dark {
+                    egui::Color32::from_white_alpha(12)
+                } else {
+                    egui::Color32::from_black_alpha(8)
+                };
+
+                let pill_frame = egui::Frame::default()
+                    .fill(btn_bg)
+                    .rounding(8.0)
+                    .inner_margin(egui::Margin::symmetric(4.0, 2.0))
+                    .stroke(egui::Stroke::new(1.0, if is_dark {
+                        egui::Color32::from_white_alpha(15)
                     } else {
-                        egui::Color32::from_gray(50)
-                    };
+                        egui::Color32::from_black_alpha(12)
+                    }));
 
-                    // Dropdown spawn menu
-                    ui.menu_button(
-                        egui::RichText::new(format!("{} New", Icons::ADD))
-                            .size(12.0)
-                            .color(btn_text_color),
-                        |ui| {
-                            ui.set_min_width(200.0);
+                pill_frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
 
-                            let items = [
-                                (Icons::TERMINAL, "Local Terminal"),
-                                (Icons::FOLDER, "File Viewer"),
-                                (Icons::SERVER, "SSH & SFTP Manager"),
-                                (Icons::SERVER, "SFTP Remote Browser"),
-                                (Icons::GEAR, "Settings"),
-                            ];
+                        // Dropdown spawn menu
+                        ui.menu_button(
+                            egui::RichText::new(format!("{} New", Icons::ADD)).size(12.0),
+                            |ui| {
+                                ui.set_min_width(200.0);
 
-                            for (icon, label) in items {
-                                let item_text = format!("{} {}", icon, label);
-                                if ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(&item_text).size(12.0),
-                                    )
-                                    .fill(egui::Color32::TRANSPARENT)
-                                    .min_size(egui::vec2(ui.available_width(), 28.0)),
-                                ).clicked() {
-                                    let win_id = Uuid::new_v4().to_string();
-                                    match label {
-                                        "Local Terminal" => {
-                                            let count = self.windows.len();
-                                            let title = if count == 0 { "zsh".to_string() } else { format!("zsh ({})", count) };
-                                            self.windows.push(FloatingWindow::new(win_id, Box::new(TerminalApp::new_local(title, ctx))));
+                                let items = [
+                                    (Icons::TERMINAL, "Local Terminal"),
+                                    (Icons::FOLDER, "File Viewer"),
+                                    (Icons::SERVER, "SSH & SFTP Manager"),
+                                    (Icons::SERVER, "SFTP Remote Browser"),
+                                    (Icons::GEAR, "Settings"),
+                                ];
+
+                                for (icon, label) in items {
+                                    if ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new(format!("{} {}", icon, label)).size(12.0),
+                                        )
+                                        .min_size(egui::vec2(ui.available_width(), 30.0)),
+                                    ).clicked() {
+                                        let win_id = Uuid::new_v4().to_string();
+                                        match label {
+                                            "Local Terminal" => {
+                                                let count = self.windows.len();
+                                                let title = if count == 0 { "zsh".to_string() } else { format!("zsh ({})", count) };
+                                                self.windows.push(FloatingWindow::new(win_id, Box::new(TerminalApp::new_local(title, ctx))));
+                                            }
+                                            "File Viewer" => {
+                                                self.windows.push(FloatingWindow::new(win_id, Box::new(FileViewerApp::new())));
+                                            }
+                                            "SSH & SFTP Manager" => {
+                                                self.windows.push(FloatingWindow::new(win_id, Box::new(SshManagerApp::new())));
+                                            }
+                                            "SFTP Remote Browser" => {
+                                                self.windows.push(FloatingWindow::new(win_id, Box::new(SftpApp::new())));
+                                            }
+                                            "Settings" => {
+                                                self.windows.push(FloatingWindow::new(win_id, Box::new(SettingsApp)));
+                                            }
+                                            _ => {}
                                         }
-                                        "File Viewer" => {
-                                            self.windows.push(FloatingWindow::new(win_id, Box::new(FileViewerApp::new())));
-                                        }
-                                        "SSH & SFTP Manager" => {
-                                            self.windows.push(FloatingWindow::new(win_id, Box::new(SshManagerApp::new())));
-                                        }
-                                        "SFTP Remote Browser" => {
-                                            self.windows.push(FloatingWindow::new(win_id, Box::new(SftpApp::new())));
-                                        }
-                                        "Settings" => {
-                                            self.windows.push(FloatingWindow::new(win_id, Box::new(SettingsApp)));
-                                        }
-                                        _ => {}
+                                        ui.close_menu();
                                     }
-                                    ui.close_menu();
                                 }
-                            }
-                        },
-                    );
+                            },
+                        );
 
-                    // Window count indicator
-                    ui.add_space(8.0);
-                    let count = self.windows.len();
-                    let count_color = if is_dark {
-                        egui::Color32::from_gray(80)
-                    } else {
-                        egui::Color32::from_gray(160)
-                    };
-                    ui.label(
-                        egui::RichText::new(format!("{} windows", count))
-                            .size(11.0)
-                            .color(count_color),
-                    );
+                        // Separator dot
+                        let dot_color = if is_dark {
+                            egui::Color32::from_gray(50)
+                        } else {
+                            egui::Color32::from_gray(190)
+                        };
+                        ui.label(egui::RichText::new("·").size(12.0).color(dot_color));
+
+                        // Window count
+                        let count = self.windows.len();
+                        let count_color = if is_dark {
+                            egui::Color32::from_gray(90)
+                        } else {
+                            egui::Color32::from_gray(140)
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("{}", count))
+                                .size(11.0)
+                                .color(count_color),
+                        );
+                    });
                 });
             });
 

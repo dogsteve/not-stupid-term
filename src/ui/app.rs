@@ -108,13 +108,23 @@ impl XTermApp {
                     let is_active = idx == self.active_workspace_idx;
 
                     if workspace.is_editing_name {
-                        let resp = ui.add(egui::TextEdit::singleline(&mut workspace.name).desired_width(100.0));
-                        if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut workspace.name)
+                                .desired_width(100.0)
+                                .font(egui::FontId::proportional(12.5))
+                        );
+                        // Exit edit on: Enter, Escape, or clicking elsewhere
+                        let should_close = resp.lost_focus()
+                            || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                        if should_close {
                             workspace.is_editing_name = false;
                         }
-                        resp.request_focus();
+                        if !resp.lost_focus() {
+                            resp.request_focus();
+                        }
                     } else {
-                        // Tab as a simple clickable label with underline
+                        // Tab with name + close button
                         let text_color = if is_active {
                             ctx.style().visuals.text_color()
                         } else if is_dark {
@@ -123,18 +133,53 @@ impl XTermApp {
                             egui::Color32::from_gray(130)
                         };
 
-                        let tab_resp = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(&workspace.name).size(12.5).color(text_color)
-                            )
-                            .fill(egui::Color32::TRANSPARENT)
-                            .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
-                            .min_size(egui::vec2(0.0, 28.0))
-                        );
+                        let tab_id = ui.id().with(("tab", idx));
+
+                        // Draw tab as a group
+                        let tab_resp = ui.horizontal(|ui| {
+                            // Tab name button
+                            let name_resp = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(&workspace.name).size(12.5).color(text_color)
+                                )
+                                .fill(egui::Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE)
+                                .rounding(egui::Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
+                                .min_size(egui::vec2(0.0, 26.0))
+                            );
+
+                            if name_resp.clicked() {
+                                self.active_workspace_idx = idx;
+                            }
+                            if name_resp.double_clicked() {
+                                workspace.is_editing_name = true;
+                            }
+
+                            // Close button (×) — always visible
+                            let close_color = if is_dark {
+                                egui::Color32::from_gray(80)
+                            } else {
+                                egui::Color32::from_gray(150)
+                            };
+                            let close_resp = ui.add(
+                                egui::Button::new(
+                                    egui::RichText::new(Icons::CLOSE).size(10.0).color(close_color)
+                                )
+                                .fill(egui::Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE)
+                                .rounding(4.0)
+                                .min_size(egui::vec2(18.0, 18.0))
+                            );
+                            if close_resp.clicked() {
+                                to_remove = Some(idx);
+                            }
+
+                            name_resp
+                        });
 
                         // Active indicator: accent underline
                         if is_active {
-                            let r = tab_resp.rect;
+                            let r = tab_resp.response.rect;
                             ui.painter().hline(
                                 r.left()..=r.right(),
                                 r.bottom(),
@@ -142,19 +187,8 @@ impl XTermApp {
                             );
                         }
 
-                        if tab_resp.clicked() {
-                            self.active_workspace_idx = idx;
-                        }
-                        if tab_resp.double_clicked() {
-                            workspace.is_editing_name = true;
-                        }
-
-                        // Close on middle-click
-                        if tab_resp.middle_clicked() {
-                            to_remove = Some(idx);
-                        }
-
-                        tab_resp.context_menu(|ui| {
+                        // Context menu
+                        tab_resp.response.context_menu(|ui| {
                             if ui.button(format!("{} Rename", Icons::EDIT)).clicked() {
                                 workspace.is_editing_name = true;
                                 ui.close_menu();
