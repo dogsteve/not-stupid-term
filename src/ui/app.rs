@@ -70,11 +70,25 @@ impl XTermApp {
     fn open_or_focus_settings(&mut self) {
         if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
             if let Some(pos) = ws.windows.iter().position(|w| w.app.window_type() == "settings") {
-                let settings_win = ws.windows.remove(pos);
+                let mut settings_win = ws.windows.remove(pos);
+                settings_win.focus_requested = true;
                 ws.windows.push(settings_win);
             } else {
                 let win_id = uuid::Uuid::new_v4().to_string();
                 ws.windows.push(FloatingWindow::new(win_id, Box::new(SettingsApp)));
+            }
+        }
+    }
+
+    fn open_or_focus_git_manager(&mut self) {
+        if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
+            if let Some(pos) = ws.windows.iter().position(|w| w.app.window_type() == "git_manager") {
+                let mut git_win = ws.windows.remove(pos);
+                git_win.focus_requested = true;
+                ws.windows.push(git_win);
+            } else {
+                let win_id = uuid::Uuid::new_v4().to_string();
+                ws.windows.push(FloatingWindow::new(win_id, Box::new(crate::ui::git_app::GitApp::new())));
             }
         }
     }
@@ -702,6 +716,8 @@ impl eframe::App for XTermApp {
                 }
             } else if match_shortcut(ctx, &shortcuts.open_settings) {
                 self.open_or_focus_settings();
+            } else if match_shortcut(ctx, "Cmd+Shift+G") || match_shortcut(ctx, "Ctrl+Shift+G") {
+                self.open_or_focus_git_manager();
             } else if match_shortcut(ctx, &shortcuts.command_palette) || match_shortcut(ctx, &shortcuts.find) {
                 self.palette.toggle();
             } else if match_shortcut(ctx, &shortcuts.jump_workspace_1) && !self.workspaces.is_empty() {
@@ -785,6 +801,8 @@ impl eframe::App for XTermApp {
                 crate::ui::palette::PaletteAction::Command(cmd) => {
                     if cmd == "Settings" {
                         self.open_or_focus_settings();
+                    } else if cmd == "Git Manager" {
+                        self.open_or_focus_git_manager();
                     } else if cmd == "Search" {
                         self.palette.toggle();
                     } else if cmd == "New Notepad" {
@@ -854,6 +872,7 @@ fn match_shortcut(ctx: &egui::Context, shortcut: &str) -> bool {
             "W" | "w" => egui::Key::W,
             "P" | "p" => egui::Key::P,
             "F" | "f" => egui::Key::F,
+            "G" | "g" => egui::Key::G,
             "Tab" => egui::Key::Tab,
             "Right" => egui::Key::ArrowRight,
             "Left" => egui::Key::ArrowLeft,

@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use super::editor::EditorApp;
 use super::file_viewer::FileViewerApp;
+use super::git_app::GitApp;
 use super::icons::Icons;
 use super::settings::SettingsApp;
 use super::sftp_app::SftpApp;
@@ -55,12 +56,13 @@ impl Workspace {
         ui.set_min_width(200.0);
 
         let items = [
-            (Icons::TERMINAL, "Local Terminal"),
-            (Icons::NOTE,     "New Text File (Notepad)"),
-            (Icons::FOLDER,   "File Viewer"),
-            (Icons::SERVER,   "SSH & SFTP Manager"),
-            (Icons::SERVER,   "SFTP Remote Browser"),
-            (Icons::GEAR,     "Settings"),
+            (Icons::TERMINAL,   "Local Terminal"),
+            (Icons::GIT_BRANCH, "Git Manager"),
+            (Icons::NOTE,       "New Text File (Notepad)"),
+            (Icons::FOLDER,     "File Viewer"),
+            (Icons::SERVER,     "SSH & SFTP Manager"),
+            (Icons::SERVER,     "SFTP Remote Browser"),
+            (Icons::GEAR,       "Settings"),
         ];
 
         for (icon, label) in items {
@@ -75,6 +77,15 @@ impl Workspace {
                         let count = self.windows.len();
                         let title = if count == 0 { "Terminal".to_string() } else { format!("Terminal ({})", count) };
                         self.push_window(FloatingWindow::new(win_id, Box::new(TerminalApp::new_local(title, ctx))));
+                    }
+                    "Git Manager" => {
+                        if let Some(pos) = self.windows.iter().position(|w| w.app.window_type() == "git_manager") {
+                            let mut git_win = self.windows.remove(pos);
+                            git_win.focus_requested = true;
+                            self.windows.push(git_win);
+                        } else {
+                            self.push_window(FloatingWindow::new(win_id, Box::new(GitApp::new())));
+                        }
                     }
                     "New Text File (Notepad)" => {
                         self.push_window(FloatingWindow::new(win_id, Box::new(EditorApp::new_untitled())));

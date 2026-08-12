@@ -16,12 +16,13 @@ pub struct PaletteItem {
 
 /// Built-in commands with proper Phosphor icons (PUA codepoints).
 const BUILTIN_COMMANDS: &[(&str, &str, &str)] = &[
-    ("Settings",                Icons::GEAR,     "Settings"),
-    ("New Workspace",           Icons::ADD,      "New Workspace"),
-    ("New Text File (Notepad)", Icons::NOTE,     "New Notepad"),
-    ("Local Terminal",          Icons::TERMINAL, "Local Terminal"),
-    ("SSH & SFTP Manager",      Icons::SERVER,   "SSH Manager"),
-    ("Search Commands",         Icons::SEARCH,   "Search"),
+    ("Settings",                Icons::GEAR,       "Settings"),
+    ("Git Manager",             Icons::GIT_BRANCH, "Git Manager"),
+    ("New Workspace",           Icons::ADD,        "New Workspace"),
+    ("New Text File (Notepad)", Icons::NOTE,       "New Notepad"),
+    ("Local Terminal",          Icons::TERMINAL,   "Local Terminal"),
+    ("SSH & SFTP Manager",      Icons::SERVER,     "SSH Manager"),
+    ("Search Commands",         Icons::SEARCH,     "Search"),
 ];
 
 pub struct CommandPalette {

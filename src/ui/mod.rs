@@ -4,6 +4,7 @@ pub mod editor;
 pub mod file_viewer;
 pub mod floating_window;
 pub mod formatter;
+pub mod git_app;
 pub mod highlighter;
 pub mod icons;
 pub mod palette;
@@ -15,3 +16,4 @@ pub mod terminal_app;
 pub mod theme;
 pub mod window_framework;
 pub mod workspace;
+
