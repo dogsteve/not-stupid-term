@@ -1,8 +1,9 @@
-pub mod alias;
 pub mod app;
+pub mod completion;
 pub mod editor;
 pub mod file_viewer;
 pub mod floating_window;
+pub mod formatter;
 pub mod highlighter;
 pub mod icons;
 pub mod palette;

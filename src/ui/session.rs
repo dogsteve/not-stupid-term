@@ -8,7 +8,7 @@ use crate::ui::file_viewer::FileViewerApp;
 use crate::ui::settings::{AppConfig, SettingsApp};
 use crate::ui::sftp_app::SftpApp;
 use crate::ui::ssh_manager::SshManagerApp;
-use crate::ui::terminal_app::TerminalApp;
+use crate::ui::terminal_app::{NotebookBlock, TerminalApp};
 use crate::ui::window_framework::FloatingWindow;
 use crate::ui::workspace::Workspace;
 
@@ -34,12 +34,30 @@ pub struct SessionData {
     pub config: AppConfig,
 }
 
+pub fn get_home_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home);
+        }
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        if !profile.is_empty() {
+            return PathBuf::from(profile);
+        }
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        if !appdata.is_empty() {
+            return PathBuf::from(appdata);
+        }
+    }
+    std::env::temp_dir()
+}
+
 pub fn get_session_file_path() -> PathBuf {
-    let mut path = if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".config")
-    } else {
-        std::env::temp_dir()
-    };
+    let mut path = get_home_dir();
+    if !cfg!(target_os = "windows") && path != std::env::temp_dir() {
+        path.push(".config");
+    }
     path.push("smart-term");
     let _ = fs::create_dir_all(&path);
     path.push("session.json");
@@ -77,22 +95,36 @@ pub fn save_session(workspaces: &[Workspace], active_workspace_idx: usize, confi
 
     if let Ok(json) = serde_json::to_string_pretty(&data) {
         let path = get_session_file_path();
-        let _ = fs::write(path, json);
+        let tmp_path = path.with_extension("json.tmp");
+        if let Err(e) = fs::write(&tmp_path, json) {
+            eprintln!("[SESSION ERROR] Failed to write session to {:?}: {:?}", tmp_path, e);
+        } else if let Err(e) = fs::rename(&tmp_path, &path) {
+            eprintln!("[SESSION ERROR] Failed to rename session file {:?}: {:?}", tmp_path, e);
+        }
     }
 }
 
 pub fn load_session(ctx: &egui::Context) -> Option<(Vec<Workspace>, usize, AppConfig)> {
     let path = get_session_file_path();
     if !path.exists() {
+        eprintln!("[SESSION] No session file found at {:?}", path);
         return None;
     }
 
-    let content = fs::read_to_string(path).ok()?;
-    let data: SessionData = serde_json::from_str(&content).ok()?;
+    let content = fs::read_to_string(&path).ok()?;
+    let data: SessionData = match serde_json::from_str(&content) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[SESSION ERROR] Failed to parse session file {:?}: {:?}", path, e);
+            return None;
+        }
+    };
 
     if data.workspaces.is_empty() {
         return None;
     }
+
+    eprintln!("[SESSION] Successfully loaded session file {:?} with {} workspaces", path, data.workspaces.len());
 
     let workspaces: Vec<Workspace> = data
         .workspaces
@@ -122,6 +154,30 @@ pub fn load_session(ctx: &egui::Context) -> Option<(Vec<Workspace>, usize, AppCo
                                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                                     .collect();
                             }
+                            if let Some(blocks_json) = swin
+                                .state
+                                .as_ref()
+                                .and_then(|s| s.get("blocks"))
+                                .and_then(|b| b.as_array())
+                            {
+                                use base64::Engine;
+                                for b_val in blocks_json {
+                                    let cmd = b_val.get("command").and_then(|c| c.as_str()).unwrap_or("");
+                                    let raw_str = b_val.get("raw_output").and_then(|r| r.as_str()).unwrap_or("");
+                                    let is_comp = b_val.get("is_complete").and_then(|ic| ic.as_bool()).unwrap_or(true);
+                                    let is_clear = b_val.get("is_clear_marker").and_then(|cm| cm.as_bool()).unwrap_or(false);
+
+                                    let raw_bytes = base64::engine::general_purpose::STANDARD
+                                        .decode(raw_str)
+                                        .unwrap_or_else(|_| raw_str.as_bytes().to_vec());
+
+                                    let mut block = NotebookBlock::new(cmd.to_string());
+                                    block.raw_output = raw_bytes;
+                                    block.is_complete = is_comp;
+                                    block.is_clear_marker = is_clear;
+                                    term.blocks.push(block);
+                                }
+                            }
                             Box::new(term)
                         }
                         "editor" => {
@@ -139,16 +195,40 @@ pub fn load_session(ctx: &egui::Context) -> Option<(Vec<Workspace>, usize, AppCo
                                 .unwrap_or("");
 
                             if !path_str.is_empty() && std::path::Path::new(path_str).exists() {
-                                if let Ok(ed) = EditorApp::open(path_str) {
+                                if let Ok(mut ed) = EditorApp::open(path_str) {
+                                    if ed.content != text {
+                                        ed.content = text.to_string();
+                                        ed.is_dirty = true;
+                                    }
                                     Box::new(ed)
                                 } else {
-                                    Box::new(EditorApp::new_untitled_with_content(path_str, text))
+                                    let mut ed = EditorApp::new_untitled_with_content(path_str, text);
+                                    ed.is_dirty = !text.is_empty();
+                                    Box::new(ed)
                                 }
                             } else {
-                                Box::new(EditorApp::new_untitled_with_content(path_str, text))
+                                let mut ed = EditorApp::new_untitled_with_content(path_str, text);
+                                ed.is_dirty = !text.is_empty();
+                                Box::new(ed)
                             }
                         }
-                        "file_viewer" => Box::new(FileViewerApp::new()),
+                        "file_viewer" => {
+                            let mut viewer = FileViewerApp::new();
+                            if let Some(root) = swin
+                                .state
+                                .as_ref()
+                                .and_then(|s| s.get("root_path"))
+                                .and_then(|r| r.as_str())
+                            {
+                                let path = std::path::PathBuf::from(root);
+                                if path.exists() {
+                                    viewer.root_path = path.clone();
+                                    viewer.path_history = vec![path];
+                                    viewer.history_idx = 0;
+                                }
+                            }
+                            Box::new(viewer)
+                        }
                         "ssh_manager" => Box::new(SshManagerApp::new()),
                         "sftp" => {
                             let host = swin
@@ -178,6 +258,7 @@ pub fn load_session(ctx: &egui::Context) -> Option<(Vec<Workspace>, usize, AppCo
                 name: sws.name,
                 windows,
                 is_editing_name: false,
+                closed_windows_stack: Vec::new(),
             }
         })
         .collect();

@@ -43,6 +43,47 @@ pub enum AppTheme {
     Vesper,
 }
 
+/// Window open/close animation styles.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum WindowAnimationStyle {
+    /// Opacity fades from 0 → 1.
+    Fade,
+    /// Window scales from 90% → 100% while fading in.
+    Scale,
+    /// Window slides down from 12px above its final position while fading in.
+    SlideDown,
+    /// Window slides up from 12px below its final position while fading in.
+    SlideUp,
+    /// Combined scale + slide for a "pop" feel.
+    Pop,
+}
+
+impl Default for WindowAnimationStyle {
+    fn default() -> Self { Self::Scale }
+}
+
+impl WindowAnimationStyle {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Fade      => "Fade",
+            Self::Scale     => "Scale",
+            Self::SlideDown => "Slide Down",
+            Self::SlideUp   => "Slide Up",
+            Self::Pop       => "Pop",
+        }
+    }
+
+    pub fn all() -> &'static [WindowAnimationStyle] {
+        &[
+            WindowAnimationStyle::Fade,
+            WindowAnimationStyle::Scale,
+            WindowAnimationStyle::SlideDown,
+            WindowAnimationStyle::SlideUp,
+            WindowAnimationStyle::Pop,
+        ]
+    }
+}
+
 impl Default for AppTheme {
     fn default() -> Self {
         Self::DefaultDark
@@ -93,14 +134,48 @@ impl AppTheme {
     }
 }
 
+fn default_ui_font_family() -> String { "System Default".to_string() }
+fn default_ui_font_size() -> f32 { 13.0 }
+fn default_mono_font_family() -> String { "Fira Code".to_string() }
+fn default_mono_font_size() -> f32 { 12.0 }
+
+fn default_shell_program() -> String {
+    if let Ok(shell) = std::env::var("SHELL") {
+        if !shell.is_empty() {
+            return shell;
+        }
+    }
+    if cfg!(target_os = "windows") {
+        "powershell.exe".to_string()
+    } else if std::path::Path::new("/bin/bash").exists() {
+        "/bin/bash".to_string()
+    } else if std::path::Path::new("/bin/zsh").exists() {
+        "/bin/zsh".to_string()
+    } else {
+        "/bin/sh".to_string()
+    }
+}
+
+fn default_animations_enabled() -> bool { true }
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
-    pub font_size: f32,
+    #[serde(default = "default_ui_font_family")]
+    pub ui_font_family: String,
+    #[serde(default = "default_ui_font_size")]
+    pub ui_font_size: f32,
+
+    #[serde(default = "default_mono_font_family", alias = "font_family")]
+    pub mono_font_family: String,
+    #[serde(default = "default_mono_font_size", alias = "font_size")]
+    pub mono_font_size: f32,
+
     pub blur_level: f32,
     pub window_rounding: f32,
     pub theme: AppTheme,
     pub sync_os_theme: bool,
-    pub font_family: String,
+    #[serde(default = "default_shell_program")]
     pub shell_program: String,
     pub cursor_style: String,
     pub auto_refocus: bool,
@@ -123,18 +198,80 @@ pub struct AppConfig {
     pub confirm_on_close: bool,
     pub natural_scrolling: bool,
     pub gpu_acceleration: bool,
+    #[serde(default)]
+    pub shortcuts: ShortcutConfig,
+    /// Whether window open animations are enabled.
+    #[serde(default = "default_animations_enabled")]
+    pub animations_enabled: bool,
+    /// Which animation style to use when a window opens.
+    #[serde(default)]
+    pub animation_style: WindowAnimationStyle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ShortcutConfig {
+    pub new_terminal: String,
+    pub close_window: String,
+    pub reopen_window: String,
+    pub next_window: String,
+    pub prev_window: String,
+    pub next_workspace: String,
+    pub prev_workspace: String,
+    pub open_settings: String,
+    pub command_palette: String,
+    pub find: String,
+    pub jump_workspace_1: String,
+    pub jump_workspace_2: String,
+    pub jump_workspace_3: String,
+    pub jump_workspace_4: String,
+    pub jump_workspace_5: String,
+    pub jump_workspace_6: String,
+    pub jump_workspace_7: String,
+    pub jump_workspace_8: String,
+    pub jump_workspace_9: String,
+}
+
+impl Default for ShortcutConfig {
+    fn default() -> Self {
+        let is_mac = cfg!(target_os = "macos");
+        let mod_key = if is_mac { "Cmd" } else { "Ctrl" };
+        Self {
+            new_terminal: format!("{}+T", mod_key),
+            close_window: format!("{}+W", mod_key),
+            reopen_window: format!("{}+Shift+T", mod_key),
+            next_window: "Ctrl+Tab".to_string(),
+            prev_window: "Ctrl+Shift+Tab".to_string(),
+            next_workspace: "Alt+Right".to_string(),
+            prev_workspace: "Alt+Left".to_string(),
+            open_settings: format!("{}+,", mod_key),
+            command_palette: format!("{}+Shift+P", mod_key),
+            find: format!("{}+F", mod_key),
+            jump_workspace_1: format!("{}+1", mod_key),
+            jump_workspace_2: format!("{}+2", mod_key),
+            jump_workspace_3: format!("{}+3", mod_key),
+            jump_workspace_4: format!("{}+4", mod_key),
+            jump_workspace_5: format!("{}+5", mod_key),
+            jump_workspace_6: format!("{}+6", mod_key),
+            jump_workspace_7: format!("{}+7", mod_key),
+            jump_workspace_8: format!("{}+8", mod_key),
+            jump_workspace_9: format!("{}+9", mod_key),
+        }
+    }
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            font_size: 12.0,
+            ui_font_family: default_ui_font_family(),
+            ui_font_size: default_ui_font_size(),
+            mono_font_family: default_mono_font_family(),
+            mono_font_size: default_mono_font_size(),
             blur_level: 0.15,
             window_rounding: 12.0,
             theme: AppTheme::DefaultDark,
             sync_os_theme: false,
-            font_family: "Fira Code".to_string(),
-            shell_program: "/bin/zsh".to_string(),
+            shell_program: default_shell_program(),
             cursor_style: "Block".to_string(),
             auto_refocus: true,
             tab_size: 4,
@@ -155,6 +292,9 @@ impl Default for AppConfig {
             confirm_on_close: true,
             natural_scrolling: true,
             gpu_acceleration: true,
+            shortcuts: ShortcutConfig::default(),
+            animations_enabled: true,
+            animation_style: WindowAnimationStyle::default(),
         }
     }
 }
@@ -202,14 +342,14 @@ impl WindowApp for SettingsApp {
                     (Icons::MOON, "Themes"),
                     (Icons::TERMINAL, "Terminal"),
                     (Icons::EDIT, "Editor"),
+                    (Icons::SLIDERS, "Shortcuts"),
                     (Icons::SERVER, "MCP Server"),
                     (Icons::GEAR, "Advanced"),
                 ];
 
                 for (i, (icon, label)) in tabs.iter().enumerate() {
                     let selected = active_tab == i;
-                    let text = format!("  {}  {}", icon, label);
-
+                    
                     let text_color = if selected {
                         ctx.style().visuals.text_color()
                     } else if is_dark {
@@ -217,9 +357,15 @@ impl WindowApp for SettingsApp {
                     } else {
                         egui::Color32::from_gray(100)
                     };
+                    
+                    let mut job = Icons::job(icon, label, 13.0);
+                    // Override the placeholder color with the actual text color
+                    for section in &mut job.sections {
+                        section.format.color = text_color;
+                    }
 
                     let resp = ui.add(
-                        egui::Button::new(egui::RichText::new(&text).size(13.0).color(text_color))
+                        egui::Button::new(job)
                             .fill(if selected {
                                 if is_dark { egui::Color32::from_white_alpha(12) } else { egui::Color32::from_black_alpha(8) }
                             } else {
@@ -265,8 +411,9 @@ impl WindowApp for SettingsApp {
                             1 => self.render_themes(ui, ctx, config, is_dark),
                             2 => self.render_terminal(ui, ctx, config, is_dark),
                             3 => self.render_editor(ui, ctx, config, is_dark),
-                            4 => self.render_mcp(ui, ctx, config, is_dark),
-                            5 => self.render_advanced(ui, ctx, config, is_dark),
+                            4 => self.render_shortcuts(ui, ctx, config, is_dark),
+                            5 => self.render_mcp(ui, ctx, config, is_dark),
+                            6 => self.render_advanced(ui, ctx, config, is_dark),
                             _ => {}
                         }
 
@@ -305,30 +452,68 @@ impl SettingsApp {
     fn render_appearance(&self, ui: &mut egui::Ui, ctx: &egui::Context, config: &mut AppConfig, is_dark: bool) {
         Self::section_heading(ui, "Appearance");
 
+        ui.label(egui::RichText::new("UI Font (Normal / Proportional)").size(14.0).strong());
+        ui.add_space(4.0);
         Self::card_frame(ctx, is_dark).show(ui, |ui| {
-            egui::Grid::new("appearance_grid")
+            egui::Grid::new("ui_font_grid")
                 .num_columns(2)
                 .spacing([20.0, 14.0])
-                .min_col_width(140.0)
+                .min_col_width(160.0)
                 .show(ui, |ui| {
-                    Self::setting_row(ui, "Font Family");
-                    egui::ComboBox::from_id_salt("font_family")
-                        .selected_text(&config.font_family)
+                    Self::setting_row(ui, "UI Font Family");
+                    egui::ComboBox::from_id_salt("ui_font_family")
+                        .selected_text(&config.ui_font_family)
                         .width(200.0)
                         .show_ui(ui, |ui| {
-                            for font in ["System Default", "Fira Code", "JetBrains Mono", "Menlo", "Monaco",
-                                         "SF Mono", "Cascadia Code", "Inconsolata", "Source Code Pro",
-                                         "IBM Plex Mono", "Hack", "Consolas"] {
-                                ui.selectable_value(&mut config.font_family, font.to_string(), font);
+                            for (font, hint) in [
+                                ("System Default", "egui built-in (Ubuntu Light)"),
+                                ("Inter",          "Modern sans-serif · bundled"),
+                                ("Noto Sans",      "Universal coverage · bundled"),
+                            ] {
+                                ui.selectable_value(&mut config.ui_font_family, font.to_string(), font)
+                                    .on_hover_text(hint);
                             }
                         });
                     ui.end_row();
 
-                    Self::setting_row(ui, "Font Size");
+                    Self::setting_row(ui, "UI Font Size");
                     ui.horizontal(|ui| {
-                        ui.add(egui::Slider::new(&mut config.font_size, 8.0..=36.0).suffix(" px").step_by(1.0));
+                        ui.add(egui::Slider::new(&mut config.ui_font_size, 9.0..=24.0).suffix(" px").step_by(0.5));
+                        if ui.small_button(Icons::REFRESH).on_hover_text("Reset to 13px").clicked() {
+                            config.ui_font_size = 13.0;
+                        }
+                    });
+                    ui.end_row();
+                });
+        });
+
+        ui.add_space(14.0);
+        ui.label(egui::RichText::new("Terminal & Code Editor Font (Monospace)").size(14.0).strong());
+        ui.add_space(4.0);
+        Self::card_frame(ctx, is_dark).show(ui, |ui| {
+            egui::Grid::new("mono_font_grid")
+                .num_columns(2)
+                .spacing([20.0, 14.0])
+                .min_col_width(160.0)
+                .show(ui, |ui| {
+                    Self::setting_row(ui, "Monospace Font Family");
+                    egui::ComboBox::from_id_salt("mono_font_family")
+                        .selected_text(&config.mono_font_family)
+                        .width(200.0)
+                        .show_ui(ui, |ui| {
+                            for font in ["Fira Code", "JetBrains Mono", "Menlo", "Monaco", "SF Mono",
+                                         "Cascadia Code", "Inconsolata", "Source Code Pro",
+                                         "IBM Plex Mono", "Hack", "Consolas"] {
+                                ui.selectable_value(&mut config.mono_font_family, font.to_string(), font);
+                            }
+                        });
+                    ui.end_row();
+
+                    Self::setting_row(ui, "Monospace Font Size");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut config.mono_font_size, 8.0..=36.0).suffix(" px").step_by(1.0));
                         if ui.small_button(Icons::REFRESH).on_hover_text("Reset to 12px").clicked() {
-                            config.font_size = 12.0;
+                            config.mono_font_size = 12.0;
                         }
                     });
                     ui.end_row();
@@ -336,7 +521,18 @@ impl SettingsApp {
                     Self::setting_row(ui, "Font Ligatures");
                     ui.checkbox(&mut config.ligatures_enabled, "Enable ligatures (=> != ===)");
                     ui.end_row();
+                });
+        });
 
+        ui.add_space(14.0);
+        ui.label(egui::RichText::new("Window & Effect Options").size(14.0).strong());
+        ui.add_space(4.0);
+        Self::card_frame(ctx, is_dark).show(ui, |ui| {
+            egui::Grid::new("window_effects_grid")
+                .num_columns(2)
+                .spacing([20.0, 14.0])
+                .min_col_width(160.0)
+                .show(ui, |ui| {
                     Self::setting_row(ui, "Window Rounding");
                     ui.add(egui::Slider::new(&mut config.window_rounding, 0.0..=24.0).suffix(" px"));
                     ui.end_row();
@@ -344,24 +540,44 @@ impl SettingsApp {
                     Self::setting_row(ui, "Background Opacity");
                     ui.add(egui::Slider::new(&mut config.blur_level, 0.0..=0.9).show_value(true));
                     ui.end_row();
+
+                    Self::setting_row(ui, "Window Animations");
+                    ui.checkbox(&mut config.animations_enabled, "Enable open animations");
+                    ui.end_row();
+
+                    if config.animations_enabled {
+                        Self::setting_row(ui, "Animation Style");
+                        egui::ComboBox::from_id_salt("animation_style_combo")
+                            .selected_text(config.animation_style.label())
+                            .show_ui(ui, |ui| {
+                                for style in crate::ui::settings::WindowAnimationStyle::all() {
+                                    let label = style.label();
+                                    if ui.selectable_label(config.animation_style == *style, label).clicked() {
+                                        config.animation_style = style.clone();
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    }
                 });
         });
 
-        ui.add_space(12.0);
+        ui.add_space(14.0);
 
-        // Live preview
+        // Live preview card
         ui.label(egui::RichText::new("Live Preview").size(12.0).color(
             if is_dark { egui::Color32::from_gray(100) } else { egui::Color32::from_gray(160) }
         ));
         ui.add_space(4.0);
         let preview_bg = if is_dark { egui::Color32::from_gray(16) } else { egui::Color32::from_gray(248) };
         egui::Frame::default().fill(preview_bg).rounding(6.0).inner_margin(12.0).show(ui, |ui| {
-            ui.label(egui::RichText::new("~ > echo \"Hello, Smart Terminal!\"")
-                .family(egui::FontFamily::Monospace).size(config.font_size));
-            ui.label(egui::RichText::new("Hello, Smart Terminal!")
-                .family(egui::FontFamily::Monospace).size(config.font_size));
+            ui.label(egui::RichText::new("UI Text (Normal Font): Workspace • Settings • File Viewer • SSH Manager")
+                .family(egui::FontFamily::Proportional).size(config.ui_font_size));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("~ > echo \"Terminal & Code (Monospace Font)\"")
+                .family(egui::FontFamily::Monospace).size(config.mono_font_size));
             ui.label(egui::RichText::new("0O 1lI {} [] () <> => != ++ -- === !==")
-                .family(egui::FontFamily::Monospace).size(config.font_size)
+                .family(egui::FontFamily::Monospace).size(config.mono_font_size)
                 .color(if is_dark { egui::Color32::from_gray(80) } else { egui::Color32::from_gray(170) }));
         });
     }
@@ -601,16 +817,66 @@ impl SettingsApp {
         // Reset & About section
         Self::card_frame(ctx, is_dark).show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button(format!("{} Reset All Settings", Icons::REFRESH)).clicked() {
+                if ui.button(Icons::label_job(Icons::REFRESH, "Reset All Settings", 12.0, ui.visuals().text_color())).clicked() {
                     *config = AppConfig::default();
                 }
                 ui.add_space(12.0);
                 ui.label(
                     egui::RichText::new("Smart Terminal v0.1.0  •  Phosphor Icons  •  egui")
                         .size(11.0)
-                        .color(if is_dark { egui::Color32::from_gray(70) } else { egui::Color32::from_gray(160) })
+                        .color(if is_dark { egui::Color32::from_gray(70) } else { egui::Color32::from_gray(160) }),
                 );
             });
+        });
+    }
+
+    fn render_shortcuts(&self, ui: &mut egui::Ui, ctx: &egui::Context, config: &mut AppConfig, is_dark: bool) {
+        Self::section_heading(ui, "Keyboard Shortcuts (Chrome Style)");
+
+        Self::card_frame(ctx, is_dark).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Customize keyboard shortcuts or reset to Google Chrome defaults.").weak().size(12.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(Icons::label_job(Icons::REFRESH, "Reset Chrome Defaults", 12.0, ui.visuals().text_color())).clicked() {
+                        config.shortcuts = ShortcutConfig::default();
+                    }
+                });
+            });
+            ui.add_space(8.0);
+
+            egui::Grid::new("shortcuts_grid")
+                .num_columns(2)
+                .spacing([20.0, 10.0])
+                .min_col_width(200.0)
+                .show(ui, |ui| {
+                    let rows = [
+                        ("New Terminal Window", &mut config.shortcuts.new_terminal),
+                        ("Close Active Window", &mut config.shortcuts.close_window),
+                        ("Re-open Closed Window", &mut config.shortcuts.reopen_window),
+                        ("Next Window", &mut config.shortcuts.next_window),
+                        ("Previous Window", &mut config.shortcuts.prev_window),
+                        ("Next Workspace Tab", &mut config.shortcuts.next_workspace),
+                        ("Previous Workspace Tab", &mut config.shortcuts.prev_workspace),
+                        ("Open Settings", &mut config.shortcuts.open_settings),
+                        ("Command Palette", &mut config.shortcuts.command_palette),
+                        ("Find / Search", &mut config.shortcuts.find),
+                        ("Jump to Workspace 1", &mut config.shortcuts.jump_workspace_1),
+                        ("Jump to Workspace 2", &mut config.shortcuts.jump_workspace_2),
+                        ("Jump to Workspace 3", &mut config.shortcuts.jump_workspace_3),
+                        ("Jump to Workspace 4", &mut config.shortcuts.jump_workspace_4),
+                        ("Jump to Workspace 5", &mut config.shortcuts.jump_workspace_5),
+                        ("Jump to Workspace 6", &mut config.shortcuts.jump_workspace_6),
+                        ("Jump to Workspace 7", &mut config.shortcuts.jump_workspace_7),
+                        ("Jump to Workspace 8", &mut config.shortcuts.jump_workspace_8),
+                        ("Jump to Workspace 9", &mut config.shortcuts.jump_workspace_9),
+                    ];
+
+                    for (label, val) in rows {
+                        Self::setting_row(ui, label);
+                        ui.add(egui::TextEdit::singleline(val).desired_width(140.0));
+                        ui.end_row();
+                    }
+                });
         });
     }
 }

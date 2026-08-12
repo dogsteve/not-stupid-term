@@ -20,9 +20,11 @@ fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1024.0, 768.0])
+            .with_min_inner_size([640.0, 400.0])
             .with_title("X-Term")
             .with_decorations(false)
-            .with_transparent(true),
+            .with_transparent(true)
+            .with_resizable(true),
         ..Default::default()
     };
 

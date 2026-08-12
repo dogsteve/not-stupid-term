@@ -62,8 +62,6 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
     visuals.selection.bg_fill = egui::Color32::from_rgb(accent.0, accent.1, accent.2);
     visuals.selection.stroke = egui::Stroke::new(0.0, egui::Color32::TRANSPARENT);
 
-    let bg_color = egui::Color32::from_rgb(bg.0, bg.1, bg.2);
-    let panel_color = egui::Color32::from_rgb(panel_bg.0, panel_bg.1, panel_bg.2);
     let text_c = egui::Color32::from_rgb(text.0, text.1, text.2);
     let accent_c = egui::Color32::from_rgb(accent.0, accent.1, accent.2);
 
@@ -169,7 +167,7 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
     };
 
     // Separator & striped rows
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5, if is_dark {
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(0.5_f32, if is_dark {
         egui::Color32::from_white_alpha(12)
     } else {
         egui::Color32::from_black_alpha(10)
@@ -184,10 +182,16 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
     for (text_style, font_id) in style.text_styles.iter_mut() {
         match text_style {
             egui::TextStyle::Body | egui::TextStyle::Button => {
-                font_id.size = 13.0;
+                font_id.size = config.ui_font_size;
             }
             egui::TextStyle::Heading => {
-                font_id.size = 18.0;
+                font_id.size = config.ui_font_size + 5.0;
+            }
+            egui::TextStyle::Small => {
+                font_id.size = (config.ui_font_size - 2.0).max(9.0);
+            }
+            egui::TextStyle::Monospace => {
+                font_id.size = config.mono_font_size;
             }
             _ => {}
         }
@@ -197,37 +201,88 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
     ctx.set_visuals(visuals);
 }
 
-pub fn apply_font(ctx: &egui::Context, font_family: &str) {
+pub fn apply_font(ctx: &egui::Context, ui_font_family: &str, mono_font_family: &str) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Register Phosphor Icons font for UI icons (PUA glyphs)
+    // ── Register Phosphor Icons font (PUA glyphs U+E000–U+F8FF) ──────────
+    // Phosphor is registered in two ways:
+    //   1. As a dedicated named family "phosphor" → used explicitly for icon widgets
+    //      via FontFamily::Name("phosphor".into()), guaranteeing correct glyph lookup.
+    //   2. As the last fallback on Proportional/Monospace (for any embedded icon chars
+    //      that don't specify an explicit font).
     fonts.font_data.insert(
         "phosphor".to_owned(),
         egui::FontData::from_static(include_bytes!("../../assets/fonts/Phosphor.ttf")),
     );
+    // Named family for explicit icon rendering
+    fonts.families.insert(
+        egui::FontFamily::Name("phosphor".into()),
+        vec!["phosphor".to_owned()],
+    );
 
-    match font_family {
+    // ── UI Proportional Font (inserted at index 0 = highest priority) ─────
+    match ui_font_family {
+        "Inter" => {
+            fonts.font_data.insert(
+                "Inter".to_owned(),
+                egui::FontData::from_static(include_bytes!("../../assets/fonts/Inter-Regular.ttf")),
+            );
+            fonts.families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "Inter".to_owned());
+        }
+        "Noto Sans" => {
+            fonts.font_data.insert(
+                "NotoSans".to_owned(),
+                egui::FontData::from_static(include_bytes!("../../assets/fonts/NotoSans-Regular.ttf")),
+            );
+            fonts.families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "NotoSans".to_owned());
+        }
+        _ => {
+            // "System Default" → egui's built-in Ubuntu-Light stays at index 0.
+        }
+    }
+
+    // ── Monospace Font (terminal + code editor) ───────────────────────────
+    match mono_font_family {
         "JetBrains Mono" => {
             fonts.font_data.insert(
                 "JetBrainsMono".to_owned(),
                 egui::FontData::from_static(include_bytes!("../../assets/JetBrainsMono-Regular.ttf")),
             );
-            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "JetBrainsMono".to_owned());
-            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "JetBrainsMono".to_owned());
+            fonts.families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, "JetBrainsMono".to_owned());
         }
-        "Fira Code" | _ => {
+        _ => {
+            // Default: Fira Code
             fonts.font_data.insert(
                 "FiraCode".to_owned(),
                 egui::FontData::from_static(include_bytes!("../../assets/FiraCode-Regular.ttf")),
             );
-            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "FiraCode".to_owned());
-            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "FiraCode".to_owned());
+            fonts.families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, "FiraCode".to_owned());
         }
     }
 
-    // Append Phosphor as fallback so icon glyphs resolve
-    fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().push("phosphor".to_owned());
-    fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().push("phosphor".to_owned());
+    // ── Phosphor as LAST fallback for both families ───────────────────────
+    // This is the correct position: only reached when the primary font
+    // has no glyph for a codepoint (e.g. PUA icon characters).
+    fonts.families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .push("phosphor".to_owned());
+    fonts.families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .push("phosphor".to_owned());
 
     ctx.set_fonts(fonts);
 }

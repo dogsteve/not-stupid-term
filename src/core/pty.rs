@@ -1,14 +1,18 @@
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
 use std::thread;
 use tempfile::TempDir;
+
+#[cfg(unix)]
+use libc;
 
 pub enum PtyEvent {
     CommandStart,
     CommandEnd { exit_code: i32 },
     Output(Vec<u8>),
     ClearScreen,
+    EnterAltScreen,
+    LeaveAltScreen,
 }
 
 pub struct PtySession {
@@ -62,10 +66,12 @@ impl vte::Perform for OscInterceptor {
         if !params.is_empty() && params[0] == b"1337" {
             if params.len() > 1 {
                 if params[1] == b"SmartTermCmdStart" {
+                    eprintln!("[DEBUG PTY OSC] Received SmartTermCmdStart");
                     self.flush();
                     let _ = self.sender.send(PtyEvent::CommandStart);
                     handled = true;
-                } else if params[1].starts_with(b"SmartTermCmdEnd;") {
+                } else if params[1].starts_with(b"SmartTermCmdEnd") {
+                    eprintln!("[DEBUG PTY OSC] Received SmartTermCmdEnd: {:?}", std::str::from_utf8(params[1]));
                     self.flush();
                     let parts = params[1].split(|&b| b == b';').collect::<Vec<_>>();
                     let exit_code = if parts.len() > 1 {
@@ -108,6 +114,22 @@ impl vte::Perform for OscInterceptor {
                 }
             }
         }
+
+        // Detect Alternate Screen Buffer mode (CSI ? 1049 h / 47 h / 1047 h or l)
+        if (action == 'h' || action == 'l') && intermediates == [b'?'] {
+            for p in params.iter() {
+                for &b in p.iter() {
+                    if b == 1049 || b == 47 || b == 1047 {
+                        self.flush();
+                        if action == 'h' {
+                            let _ = self.sender.send(PtyEvent::EnterAltScreen);
+                        } else {
+                            let _ = self.sender.send(PtyEvent::LeaveAltScreen);
+                        }
+                    }
+                }
+            }
+        }
         
         self.buffer.push(0x1b);
         self.buffer.push(b'[');
@@ -138,6 +160,27 @@ impl vte::Perform for OscInterceptor {
 
 impl PtySession {
     pub fn new(ctx: eframe::egui::Context) -> Result<Self, anyhow::Error> {
+        let shell = if cfg!(target_os = "windows") {
+            "powershell.exe".to_string()
+        } else if let Ok(s) = std::env::var("SHELL") {
+            if !s.is_empty() && std::path::Path::new(&s).exists() {
+                s
+            } else if std::path::Path::new("/bin/bash").exists() {
+                "/bin/bash".to_string()
+            } else {
+                "/bin/sh".to_string()
+            }
+        } else if std::path::Path::new("/bin/bash").exists() {
+            "/bin/bash".to_string()
+        } else if std::path::Path::new("/bin/zsh").exists() {
+            "/bin/zsh".to_string()
+        } else {
+            "/bin/sh".to_string()
+        };
+        Self::new_with_shell(&shell, ctx)
+    }
+
+    pub fn new_with_shell(shell_prog: &str, ctx: eframe::egui::Context) -> Result<Self, anyhow::Error> {
         let pty_system = NativePtySystem::default();
 
         let pair = pty_system.openpty(PtySize {
@@ -147,25 +190,24 @@ impl PtySession {
             pixel_height: 0,
         })?;
 
-        let mut cmd = CommandBuilder::new("zsh");
-        
-        let temp_dir = tempfile::tempdir()?;
-        let zshrc_path = temp_dir.path().join(".zshrc");
-        
-        let hook_script = r#"
-# Disable Powerlevel10k instant prompt to prevent initialization warnings and jumps
-typeset -g POWERLEVEL9K_INSTANT_PROMPT=off
+        let is_zsh = shell_prog.ends_with("zsh");
+        let is_bash = shell_prog.ends_with("bash");
 
+        let mut cmd = CommandBuilder::new(shell_prog);
+        let mut temp_dir = None;
+
+        if is_zsh {
+            cmd.arg("-i");
+            if let Ok(td) = tempfile::tempdir() {
+                let zshrc_path = td.path().join(".zshrc");
+                let hook_script = r#"
+typeset -g POWERLEVEL9K_INSTANT_PROMPT=off
 if [ -f "$HOME/.zshrc" ]; then
     source "$HOME/.zshrc"
 fi
-
-# Expand tabs to spaces so vt100 parser renders columns correctly
 if [ -t 1 ]; then
     stty -tabs 2>/dev/null || stty oxtabs 2>/dev/null
 fi
-
-# Override PROMPT strictly so no theme prints it
 export PROMPT=""
 export RPROMPT=""
 export PS1=""
@@ -173,22 +215,43 @@ export PS1=""
 smart_term_preexec() {
     print -Pn "\e]1337;SmartTermCmdStart\a"
 }
-
 smart_term_precmd() {
     local exit_code=$?
-    # Ensure it's cleared again just in case a theme hook sets it during precmd
     PROMPT=""
     RPROMPT=""
     PS1=""
     print -Pn "\e]1337;SmartTermCmdEnd;$exit_code\a"
 }
-
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec smart_term_preexec
 add-zsh-hook precmd smart_term_precmd
 "#;
-        std::fs::write(&zshrc_path, hook_script)?;
-        cmd.env("ZDOTDIR", temp_dir.path());
+                if std::fs::write(&zshrc_path, hook_script).is_ok() {
+                    cmd.env("ZDOTDIR", td.path());
+                    temp_dir = Some(td);
+                }
+            }
+        } else if is_bash {
+            cmd.arg("-i");
+            if let Ok(td) = tempfile::tempdir() {
+                let bashrc_path = td.path().join(".bashrc");
+                let hook_script = r#"
+if [ -f "$HOME/.bashrc" ]; then
+    source "$HOME/.bashrc"
+fi
+export PS1=""
+PROMPT_COMMAND='echo -ne "\033]1337;SmartTermCmdEnd;$?\007"'
+"#;
+                if std::fs::write(&bashrc_path, hook_script).is_ok() {
+                    cmd.arg("--rcfile");
+                    cmd.arg(bashrc_path.to_str().unwrap_or(".bashrc"));
+                    temp_dir = Some(td);
+                }
+            }
+        } else if !cfg!(target_os = "windows") {
+            cmd.arg("-i");
+        }
+
         cmd.env("TERM", "xterm-256color");
         cmd.env("LANG", "en_US.UTF-8");
 
@@ -229,13 +292,40 @@ add-zsh-hook precmd smart_term_precmd
             master,
             writer,
             last_size: (24, 80),
-            _temp_dir: Some(temp_dir),
+            _temp_dir: temp_dir,
         })
     }
 
     pub fn write(&mut self, input: &[u8]) {
         let _ = self.writer.write_all(input);
         let _ = self.writer.flush();
+    }
+
+    /// Send Ctrl+C (ETX byte 0x03) to interrupt the currently running command.
+    pub fn send_interrupt(&mut self) {
+        self.write(&[0x03]);
+    }
+
+    /// Forcefully kill the shell process (and its children) with SIGKILL.
+    /// Used when closing a terminal window while a command is still running.
+    pub fn kill_process(&self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.process_id {
+            if pid > 0 {
+                // Kill the entire process group so child processes are also terminated.
+                unsafe {
+                    libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+                    // Fallback: kill the process directly if it's not a group leader.
+                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                }
+            }
+        }
+        #[cfg(windows)]
+        if let Some(pid) = self.process_id {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output();
+        }
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {

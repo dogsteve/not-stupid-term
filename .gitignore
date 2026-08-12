@@ -6,3 +6,5 @@ plan_test*
 get_scrollback*
 *.tmp
 fix_plan.txt
+.DS_Store
+

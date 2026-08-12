@@ -15,12 +15,13 @@ pub struct Workspace {
     pub name: String,
     pub windows: Vec<FloatingWindow>,
     pub is_editing_name: bool,
+    pub closed_windows_stack: Vec<FloatingWindow>,
 }
 
 impl Workspace {
     pub fn new(name: &str, ctx: &egui::Context) -> Self {
         let win_id = Uuid::new_v4().to_string();
-        let default_terminal = Box::new(TerminalApp::new_local("zsh", ctx));
+        let default_terminal = Box::new(TerminalApp::new_local("Terminal", ctx));
         let default_window = FloatingWindow::new(win_id, default_terminal);
 
         Self {
@@ -28,6 +29,118 @@ impl Workspace {
             name: name.to_string(),
             windows: vec![default_window],
             is_editing_name: false,
+            closed_windows_stack: Vec::new(),
+        }
+    }
+
+    pub fn push_window(&mut self, mut window: FloatingWindow) {
+        window.focus_requested = true;
+        self.windows.push(window);
+    }
+
+    /// Spawns a new local terminal window and pushes it to the front.
+    /// Kept for use by keyboard shortcuts (Ctrl+T).
+    pub fn open_new_terminal(&mut self, ctx: &egui::Context) {
+        let n = self.windows.len() + 1;
+        let title = format!("Terminal {}", n);
+        let win_id = uuid::Uuid::new_v4().to_string();
+        let term = Box::new(TerminalApp::new_local(title, ctx));
+        self.push_window(FloatingWindow::new(win_id, term));
+    }
+
+    /// Renders the "New Window" dropdown menu body.
+    /// Call this inside a `ui.menu_button(...)` closure to share the spawn menu
+    /// between the topbar + button and the workspace footer New button.
+    pub fn show_new_window_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.set_min_width(200.0);
+
+        let items = [
+            (Icons::TERMINAL, "Local Terminal"),
+            (Icons::NOTE,     "New Text File (Notepad)"),
+            (Icons::FOLDER,   "File Viewer"),
+            (Icons::SERVER,   "SSH & SFTP Manager"),
+            (Icons::SERVER,   "SFTP Remote Browser"),
+            (Icons::GEAR,     "Settings"),
+        ];
+
+        for (icon, label) in items {
+            let job = Icons::label_job(icon, label, 12.0, ui.visuals().text_color());
+            if ui.add(
+                egui::Button::new(job)
+                    .min_size(egui::vec2(ui.available_width(), 30.0)),
+            ).clicked() {
+                let win_id = uuid::Uuid::new_v4().to_string();
+                match label {
+                    "Local Terminal" => {
+                        let count = self.windows.len();
+                        let title = if count == 0 { "Terminal".to_string() } else { format!("Terminal ({})", count) };
+                        self.push_window(FloatingWindow::new(win_id, Box::new(TerminalApp::new_local(title, ctx))));
+                    }
+                    "New Text File (Notepad)" => {
+                        self.push_window(FloatingWindow::new(win_id, Box::new(EditorApp::new_untitled())));
+                    }
+                    "File Viewer" => {
+                        self.push_window(FloatingWindow::new(win_id, Box::new(FileViewerApp::new())));
+                    }
+                    "SSH & SFTP Manager" => {
+                        self.push_window(FloatingWindow::new(win_id, Box::new(SshManagerApp::new())));
+                    }
+                    "SFTP Remote Browser" => {
+                        self.push_window(FloatingWindow::new(win_id, Box::new(SftpApp::new())));
+                    }
+                    "Settings" => {
+                        if let Some(pos) = self.windows.iter().position(|w| w.app.window_type() == "settings") {
+                            let mut settings_win = self.windows.remove(pos);
+                            settings_win.focus_requested = true;
+                            self.windows.push(settings_win);
+                        } else {
+                            self.push_window(FloatingWindow::new(win_id, Box::new(SettingsApp)));
+                        }
+                    }
+                    _ => {}
+                }
+                ui.close_menu();
+            }
+        }
+    }
+
+    pub fn close_active_window(&mut self) -> bool {
+        if let Some(mut win) = self.windows.pop() {
+            win.is_open = false;
+            self.closed_windows_stack.push(win);
+            if self.closed_windows_stack.len() > 10 {
+                self.closed_windows_stack.remove(0);
+            }
+            if let Some(top) = self.windows.last_mut() {
+                top.focus_requested = true;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reopen_last_closed_window(&mut self) -> bool {
+        if let Some(mut win) = self.closed_windows_stack.pop() {
+            win.is_open = true;
+            win.focus_requested = true;
+            self.windows.push(win);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn cycle_window_focus(&mut self, forward: bool) {
+        if self.windows.len() > 1 {
+            if forward {
+                self.windows.rotate_left(1);
+            } else {
+                self.windows.rotate_right(1);
+            }
+            if let Some(top) = self.windows.last_mut() {
+                top.focus_requested = true;
+            }
         }
     }
 
@@ -59,7 +172,7 @@ impl Workspace {
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
 
-                let accent = ui.style().visuals.selection.bg_fill;
+                let _accent = ui.style().visuals.selection.bg_fill;
 
                 // "+ New" dropdown button — floating pill style
                 let btn_bg = if is_dark {
@@ -82,56 +195,10 @@ impl Workspace {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
 
-                        // Dropdown spawn menu
+                        // Dropdown spawn menu — delegates to shared show_new_window_menu()
                         ui.menu_button(
-                            egui::RichText::new(format!("{} New", Icons::ADD)).size(12.0),
-                            |ui| {
-                                ui.set_min_width(200.0);
-
-                                let items = [
-                                    (Icons::TERMINAL, "Local Terminal"),
-                                    (Icons::NOTE, "New Text File (Notepad)"),
-                                    (Icons::FOLDER, "File Viewer"),
-                                    (Icons::SERVER, "SSH & SFTP Manager"),
-                                    (Icons::SERVER, "SFTP Remote Browser"),
-                                    (Icons::GEAR, "Settings"),
-                                ];
-
-                                for (icon, label) in items {
-                                    if ui.add(
-                                        egui::Button::new(
-                                            egui::RichText::new(format!("{} {}", icon, label)).size(12.0),
-                                        )
-                                        .min_size(egui::vec2(ui.available_width(), 30.0)),
-                                    ).clicked() {
-                                        let win_id = Uuid::new_v4().to_string();
-                                        match label {
-                                            "Local Terminal" => {
-                                                let count = self.windows.len();
-                                                let title = if count == 0 { "zsh".to_string() } else { format!("zsh ({})", count) };
-                                                self.windows.push(FloatingWindow::new(win_id, Box::new(TerminalApp::new_local(title, ctx))));
-                                            }
-                                            "New Text File (Notepad)" => {
-                                                self.windows.push(FloatingWindow::new(win_id, Box::new(EditorApp::new_untitled())));
-                                            }
-                                            "File Viewer" => {
-                                                self.windows.push(FloatingWindow::new(win_id, Box::new(FileViewerApp::new())));
-                                            }
-                                            "SSH & SFTP Manager" => {
-                                                self.windows.push(FloatingWindow::new(win_id, Box::new(SshManagerApp::new())));
-                                            }
-                                            "SFTP Remote Browser" => {
-                                                self.windows.push(FloatingWindow::new(win_id, Box::new(SftpApp::new())));
-                                            }
-                                            "Settings" => {
-                                                self.windows.push(FloatingWindow::new(win_id, Box::new(SettingsApp)));
-                                            }
-                                            _ => {}
-                                        }
-                                        ui.close_menu();
-                                    }
-                                }
-                            },
+                            Icons::label_job(Icons::ADD, "New", 12.0, ui.visuals().text_color()),
+                            |ui| { self.show_new_window_menu(ui, ctx); },
                         );
 
                         // Separator dot
@@ -168,24 +235,36 @@ impl Workspace {
             }
         }
 
-        // Remove closed windows
-        self.windows.retain(|w| w.is_open);
+        // Track and remove closed windows for Ctrl+Shift+T restore
+        let mut i = 0;
+        while i < self.windows.len() {
+            if !self.windows[i].is_open {
+                let mut closed_win = self.windows.remove(i);
+                closed_win.focus_requested = true;
+                if self.closed_windows_stack.len() >= 10 {
+                    self.closed_windows_stack.remove(0);
+                }
+                self.closed_windows_stack.push(closed_win);
+            } else {
+                i += 1;
+            }
+        }
 
         // Process window actions
         for act in actions {
             match act {
                 WindowAction::ConnectSsh(cmd) => {
                     let win_id = Uuid::new_v4().to_string();
-                    self.windows.push(FloatingWindow::new(win_id, Box::new(TerminalApp::new_ssh("SSH Session", cmd, ctx))));
+                    self.push_window(FloatingWindow::new(win_id, Box::new(TerminalApp::new_ssh("SSH Session", cmd, ctx))));
                 }
                 WindowAction::OpenSftp(host) => {
                     let win_id = Uuid::new_v4().to_string();
-                    self.windows.push(FloatingWindow::new(win_id, Box::new(SftpApp::with_host(host))));
+                    self.push_window(FloatingWindow::new(win_id, Box::new(SftpApp::with_host(host))));
                 }
                 WindowAction::OpenFile(path) => {
                     if let Ok(editor) = EditorApp::open(&path) {
                         let win_id = Uuid::new_v4().to_string();
-                        self.windows.push(FloatingWindow::new(win_id, Box::new(editor)));
+                        self.push_window(FloatingWindow::new(win_id, Box::new(editor)));
                     }
                 }
             }
