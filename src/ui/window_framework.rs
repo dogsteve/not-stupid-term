@@ -232,13 +232,19 @@ impl FloatingWindow {
                 color: egui::Color32::from_black_alpha(if is_dark { 140 } else { 50 }),
             });
 
+        // Compute a stable cascade position so new windows spawn cleanly without frame-1 layout flicker
+        let id_hash = self.id.bytes().fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+        let cascade_offset = ((id_hash % 8) as f32) * 26.0;
+        let default_pos = egui::pos2(60.0 + cascade_offset, 50.0 + cascade_offset);
+
         let mut win_builder = egui::Window::new(&self.id)
             .id(egui::Id::new(&self.id))
             .title_bar(false)
             .frame(frame)
             .resizable(true)
             .min_size(min_s)
-            .default_size(def_s);
+            .default_size(def_s)
+            .default_pos(default_pos);
 
         if let Some((pos, size)) = self.set_pos_size.take() {
             win_builder = win_builder.fixed_pos(pos).fixed_size(size);
@@ -255,8 +261,8 @@ impl FloatingWindow {
 
         let win_layer = egui::LayerId::new(egui::Order::Middle, egui::Id::new(&self.id));
 
-        // Apply y_offset for Slide animations by shifting the window\u2019s layer transform.
-        // We do this before show() so egui places the window at the correct initial position.
+        // Apply y_offset / scale for open animations by shifting the window's layer transform.
+        // Explicitly reset to IDENTITY when animation finishes to prevent dirty transform state.
         if anim_enabled && y_offset.abs() > 0.5 {
             let current_transform = egui::emath::TSTransform {
                 translation: egui::vec2(0.0, y_offset),
@@ -269,6 +275,8 @@ impl FloatingWindow {
                 scaling: scale,
             };
             ctx.set_transform_layer(win_layer, current_transform);
+        } else {
+            ctx.set_transform_layer(win_layer, egui::emath::TSTransform::IDENTITY);
         }
 
         let win_resp = win_builder.show(ctx, |ui| {

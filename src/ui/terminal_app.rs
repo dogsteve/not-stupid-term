@@ -972,9 +972,8 @@ impl WindowApp for TerminalApp {
             // the TextEdit to overflow and trigger a layout feedback loop.
             let trailing_newline = if self.command_input.ends_with('\n') { 1 } else { 0 };
             let line_count = (self.command_input.lines().count() + trailing_newline).max(1).min(10);
-            let mono_h = config.mono_font_size * 1.5;
-            // inner_margin vertical = 8+8=16, frame stroke ~2, outer add_space=4+2=6
-            let v_margin = 24.0;
+            let mono_h = config.mono_font_size * 1.45;
+            let v_margin = 16.0; // 8.0 top + 8.0 bottom inner margin
             let stop_btn_h = 26.0 + v_margin; // minimum height when stop button shown
             let text_input_h = line_count as f32 * mono_h + v_margin;
             let input_h = if self.is_running {
@@ -1017,7 +1016,6 @@ impl WindowApp for TerminalApp {
                     let input_id = ui.id().with("notebook_cmd");
 
                     let mut enter_pressed = false;
-                    let mut shift_enter_pressed = false;
                     let mut tab_pressed = false;
                     let mut esc_pressed = false;
                     let mut up_pressed = false;
@@ -1036,9 +1034,7 @@ impl WindowApp for TerminalApp {
                     if ui.memory(|m| m.has_focus(input_id)) {
                         ui.input(|i| {
                             if i.key_pressed(egui::Key::Enter) {
-                                if i.modifiers.shift || i.modifiers.alt {
-                                    shift_enter_pressed = true;
-                                } else {
+                                if !i.modifiers.shift && !i.modifiers.alt {
                                     enter_pressed = true;
                                 }
                             }
@@ -1053,14 +1049,8 @@ impl WindowApp for TerminalApp {
                         self.interrupt();
                     }
 
-                    if shift_enter_pressed {
-                        self.command_input.push('\n');
-                        self.typed_input = self.command_input.clone();
-                        ui.ctx().request_repaint();
-                    }
-
                     let prev_input = self.command_input.clone();
-                    let hint = if self.is_running { "Type input to process…" } else { "Type or paste command… (Shift+Enter for newline)" };
+                    let hint = if self.is_running { "Type input to process…" } else { "Type command… (Shift+Enter ↵ for multiline)" };
                     // desired_rows matches actual line count (capped at 10) so
                     // pasting multiline code expands the TextEdit box correctly.
                     let response = ui.add(
