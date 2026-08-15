@@ -88,14 +88,15 @@ impl FindReplaceState {
         }
 
         let (start, end) = self.matches[self.current_match_idx];
-
-        if self.use_regex {
-            if let Ok(re) = self.build_regex() {
-                let replaced = re.replace(&content[start..end], self.replace_query.as_str()).to_string();
-                content.replace_range(start..end, &replaced);
+        if start <= content.len() && end <= content.len() && content.is_char_boundary(start) && content.is_char_boundary(end) {
+            if self.use_regex {
+                if let Ok(re) = self.build_regex() {
+                    let replaced = re.replace(&content[start..end], self.replace_query.as_str()).to_string();
+                    content.replace_range(start..end, &replaced);
+                }
+            } else {
+                content.replace_range(start..end, &self.replace_query);
             }
-        } else {
-            content.replace_range(start..end, &self.replace_query);
         }
         self.update_matches(content);
     }
@@ -247,11 +248,20 @@ impl WindowApp for EditorApp {
         }))
     }
 
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn render(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         config: &mut crate::ui::settings::AppConfig,
+        undo: &mut crate::ui::undo_manager::UndoManager,
     ) -> Option<WindowAction> {
         ui.add_space(4.0);
 
@@ -348,7 +358,13 @@ impl WindowApp for EditorApp {
 
                     if let Some(path) = target_path {
                         self.path = path.clone();
+                        let prev_content = self.original_content.clone();
                         if fs::write(&path, &self.content).is_ok() {
+                            undo.push(crate::ui::undo_manager::UndoAction::EditorSave {
+                                file_path: path.clone(),
+                                previous_content: prev_content,
+                            }, format!("Save {}", path));
+                            
                             self.original_content = self.content.clone();
                             self.is_dirty = false;
                             self.save_status = Some("Saved!".to_string());
@@ -380,7 +396,13 @@ impl WindowApp for EditorApp {
                 if save_as_btn.clicked() {
                     if let Some(path) = Self::show_save_dialog(&self.path) {
                         self.path = path.clone();
+                        let prev_content = std::fs::read_to_string(&path).unwrap_or_default();
                         if fs::write(&path, &self.content).is_ok() {
+                            undo.push(crate::ui::undo_manager::UndoAction::EditorSave {
+                                file_path: path.clone(),
+                                previous_content: prev_content,
+                            }, format!("Save As {}", path));
+                            
                             self.original_content = self.content.clone();
                             self.is_dirty = false;
                             self.save_status = Some("Saved!".to_string());
@@ -403,8 +425,13 @@ impl WindowApp for EditorApp {
                     if fmt_btn.clicked() {
                         self.format_error = None;
                         self.save_status = None;
+                        let prev_content = self.content.clone();
                         match format_content(&self.content, &kind_for_fmt) {
                             Ok(formatted) => {
+                                undo.push(crate::ui::undo_manager::UndoAction::EditorFormat {
+                                    window_id: self.path.clone(),
+                                    previous_content: prev_content,
+                                }, format!("Format {}", kind_for_fmt.label()));
                                 self.content = formatted;
                                 self.is_dirty = self.content != self.original_content;
                                 self.save_status = Some(format!("Formatted as {}!", kind_for_fmt.label()));
@@ -632,7 +659,14 @@ impl WindowApp for EditorApp {
                                         .rounding(4.0)
                                         .min_size(egui::vec2(55.0, 20.0)),
                                 ).on_hover_text("Replace Current Match").clicked() {
+                                    let prev = self.content.clone();
                                     self.find_state.replace_current(&mut self.content);
+                                    if self.content != prev {
+                                        undo.push(crate::ui::undo_manager::UndoAction::EditorReplace {
+                                            window_id: self.path.clone(),
+                                            previous_content: prev,
+                                        }, "Replace");
+                                    }
                                     self.is_dirty = self.content != self.original_content;
                                 }
 
@@ -641,7 +675,14 @@ impl WindowApp for EditorApp {
                                         .rounding(4.0)
                                         .min_size(egui::vec2(70.0, 20.0)),
                                 ).on_hover_text("Replace All Matches").clicked() {
+                                    let prev = self.content.clone();
                                     self.find_state.replace_all(&mut self.content);
+                                    if self.content != prev {
+                                        undo.push(crate::ui::undo_manager::UndoAction::EditorReplaceAll {
+                                            window_id: self.path.clone(),
+                                            previous_content: prev,
+                                        }, "Replace All");
+                                    }
                                     self.is_dirty = self.content != self.original_content;
                                 }
                             });
@@ -1054,4 +1095,19 @@ mod tests {
         state.update_matches(&content);
         assert_eq!(state.matches.len(), 1);
     }
+
+    #[test]
+    fn test_utf8_replace_current_safety() {
+        let mut state = FindReplaceState::default();
+        state.find_query = "thử".to_string();
+        state.replace_query = "kiểm tra".to_string();
+        let mut content = "Xin chào, thử start app lên test.".to_string();
+
+        state.update_matches(&content);
+        assert_eq!(state.matches.len(), 1);
+
+        state.replace_current(&mut content);
+        assert_eq!(content, "Xin chào, kiểm tra start app lên test.");
+    }
 }
+

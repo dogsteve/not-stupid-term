@@ -101,6 +101,7 @@ impl WindowApp for FileViewerApp {
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         _config: &mut crate::ui::settings::AppConfig,
+        _undo: &mut crate::ui::undo_manager::UndoManager,
     ) -> Option<WindowAction> {
         let mut action = None;
 

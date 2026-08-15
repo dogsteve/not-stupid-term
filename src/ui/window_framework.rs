@@ -1,5 +1,6 @@
 use eframe::egui;
 use super::icons::Icons;
+use super::undo_manager::UndoManager;
 
 pub enum WindowAction {
     ConnectSsh(String),
@@ -15,6 +16,7 @@ pub trait WindowApp {
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         config: &mut crate::ui::settings::AppConfig,
+        undo: &mut UndoManager,
     ) -> Option<WindowAction>;
 
     fn min_size(&self) -> [f32; 2] {
@@ -142,6 +144,7 @@ impl FloatingWindow {
         &mut self,
         ctx: &egui::Context,
         config: &mut crate::ui::settings::AppConfig,
+        undo: &mut UndoManager,
     ) -> Option<WindowAction> {
         let mut is_open = self.is_open;
         let mut action = None;
@@ -409,7 +412,11 @@ impl FloatingWindow {
                 }
 
                 // === Auto-Tiling Snap Preview & Edge Drag Detection ===
-                if ctx.input(|i| i.pointer.primary_down()) {
+                // Only activate when the user is DRAGGING this window's title bar,
+                // not on arbitrary clicks elsewhere (which would cause unwanted maximize).
+                let title_being_dragged = title_bar_resp.dragged();
+
+                if title_being_dragged {
                     if let Some(ptr) = ctx.pointer_latest_pos() {
                         let screen = ctx.screen_rect();
                         let avail_y_min = screen.min.y + 36.0;
@@ -478,9 +485,12 @@ impl FloatingWindow {
                             self.pending_snap_target = None;
                         }
                     }
+                } else if !ctx.input(|i| i.pointer.primary_down()) {
+                    // Clear pending snap when mouse is not down and title bar is not dragged
+                    self.pending_snap_target = None;
                 }
 
-                if ctx.input(|i| i.pointer.any_released()) {
+                if title_bar_resp.drag_stopped() {
                     if let Some(t) = self.pending_snap_target.take() {
                         let screen = ctx.screen_rect();
                         let tile_rect = t.compute_rect(screen);
@@ -494,7 +504,7 @@ impl FloatingWindow {
                     .inner_margin(egui::Margin::same(4.0));
 
                 content_frame.show(ui, |ui| {
-                    action = self.app.render(ui, ctx, config);
+                    action = self.app.render(ui, ctx, config, undo);
                 });
             });
 

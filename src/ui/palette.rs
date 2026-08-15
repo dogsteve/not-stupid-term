@@ -34,6 +34,7 @@ pub struct CommandPalette {
     pub file_cache: Vec<String>,
     /// 0.0 = fully hidden, 1.0 = fully visible — drives fade+slide animation.
     open_anim: f32,
+    pub last_cache_time: Option<std::time::Instant>,
 }
 
 impl CommandPalette {
@@ -46,10 +47,17 @@ impl CommandPalette {
             just_opened: false,
             file_cache: Vec::new(),
             open_anim: 0.0,
+            last_cache_time: None,
         }
     }
 
     pub fn refresh_file_cache(&mut self) {
+        if let Some(t) = self.last_cache_time {
+            if t.elapsed().as_secs() < 10 && !self.file_cache.is_empty() {
+                return;
+            }
+        }
+        self.last_cache_time = Some(std::time::Instant::now());
         self.file_cache.clear();
         for entry in walkdir::WalkDir::new(".").max_depth(6).into_iter().filter_map(|e| e.ok()) {
             if entry.file_type().is_file() {

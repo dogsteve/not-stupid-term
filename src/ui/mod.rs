@@ -14,6 +14,7 @@ pub mod sftp_app;
 pub mod ssh_manager;
 pub mod terminal_app;
 pub mod theme;
+pub mod undo_manager;
 pub mod window_framework;
 pub mod workspace;
 

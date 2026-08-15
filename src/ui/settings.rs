@@ -2,7 +2,7 @@ use eframe::egui;
 use crate::ui::icons::Icons;
 use crate::ui::window_framework::{WindowAction, WindowApp};
 
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum AppTheme {
     DefaultDark,
     DefaultLight,
@@ -44,7 +44,7 @@ pub enum AppTheme {
 }
 
 /// Window open/close animation styles.
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WindowAnimationStyle {
     /// Opacity fades from 0 → 1.
     Fade,
@@ -157,8 +157,9 @@ fn default_shell_program() -> String {
 }
 
 fn default_animations_enabled() -> bool { true }
+fn default_undo_stack_size() -> usize { 50 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     #[serde(default = "default_ui_font_family")]
@@ -206,6 +207,8 @@ pub struct AppConfig {
     /// Which animation style to use when a window opens.
     #[serde(default)]
     pub animation_style: WindowAnimationStyle,
+    #[serde(default = "default_undo_stack_size")]
+    pub undo_stack_size: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -295,6 +298,7 @@ impl Default for AppConfig {
             shortcuts: ShortcutConfig::default(),
             animations_enabled: true,
             animation_style: WindowAnimationStyle::default(),
+            undo_stack_size: default_undo_stack_size(),
         }
     }
 }
@@ -323,7 +327,10 @@ impl WindowApp for SettingsApp {
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         config: &mut AppConfig,
+        undo: &mut crate::ui::undo_manager::UndoManager,
     ) -> Option<WindowAction> {
+        let config_snapshot = config.clone();
+
         let mut active_tab = ui.data(|d| d.get_temp::<usize>(egui::Id::new("settings_tab")).unwrap_or(0));
         let is_dark = ctx.style().visuals.dark_mode;
 
@@ -423,6 +430,16 @@ impl WindowApp for SettingsApp {
         });
 
         ui.data_mut(|d| d.insert_temp(egui::Id::new("settings_tab"), active_tab));
+
+        if *config != config_snapshot {
+            undo.push(
+                crate::ui::undo_manager::UndoAction::SettingsChange {
+                    previous_config: Box::new(config_snapshot),
+                },
+                "Settings change",
+            );
+        }
+
         None
     }
 }
@@ -793,6 +810,14 @@ impl SettingsApp {
         Self::section_heading(ui, "Advanced");
 
         Self::card_frame(ctx, is_dark).show(ui, |ui| {
+            // Undo History
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Undo History Size").size(13.0));
+                ui.add(egui::Slider::new(&mut config.undo_stack_size, 10..=200).text("entries"));
+            });
+            ui.label(egui::RichText::new("Maximum number of actions that can be undone with Cmd+Z").weak().size(11.0));
+            ui.add_space(8.0);
+
             egui::Grid::new("advanced_grid")
                 .num_columns(2)
                 .spacing([20.0, 14.0])

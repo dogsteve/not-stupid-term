@@ -44,6 +44,7 @@ pub struct GitFileItem {
     pub path: String,
     pub status: FileGitStatus,
     pub staged: bool,
+    pub checked_for_commit: bool,
     pub is_selected: bool,
 }
 
@@ -85,6 +86,7 @@ pub struct GitApp {
     pub files: Vec<GitFileItem>,
     pub selected_file_path: Option<String>,
     pub commit_message: String,
+    pub amend_last_commit: bool,
     pub is_unified_view: bool,
     pub diff_rows: Vec<DiffRow>,
     pub diff_hunks: Vec<DiffHunk>,
@@ -93,6 +95,7 @@ pub struct GitApp {
     pub status_message: String,
     pub new_branch_name: String,
     pub is_creating_branch: bool,
+    pub needs_refresh: bool,
 }
 
 impl GitApp {
@@ -108,6 +111,7 @@ impl GitApp {
             files: Vec::new(),
             selected_file_path: None,
             commit_message: String::new(),
+            amend_last_commit: false,
             is_unified_view: false,
             diff_rows: Vec::new(),
             diff_hunks: Vec::new(),
@@ -116,6 +120,7 @@ impl GitApp {
             status_message: "Ready".to_string(),
             new_branch_name: String::new(),
             is_creating_branch: false,
+            needs_refresh: false,
         };
 
         app.refresh_all();
@@ -194,6 +199,7 @@ impl GitApp {
                             path: path.clone(),
                             status: st,
                             staged: true,
+                            checked_for_commit: true,
                             is_selected: self.selected_file_path.as_deref() == Some(&path),
                         });
                     }
@@ -211,6 +217,7 @@ impl GitApp {
                             path: path.clone(),
                             status: st,
                             staged: false,
+                            checked_for_commit: false,
                             is_selected: self.selected_file_path.as_deref() == Some(&path),
                         });
                     }
@@ -350,9 +357,48 @@ impl GitApp {
 
         let full_path = Path::new(&self.repo_path).join(&rel_path);
         if std::fs::write(&full_path, new_content).is_ok() {
-            self.status_message = format!("Applied/reverted hunk #{}", hunk_idx + 1);
+                self.status_message = format!("Applied/reverted hunk #{}", hunk_idx + 1);
             self.load_diff_for_file(&rel_path);
         }
+    }
+
+    pub fn delete_file(&mut self, rel_path: &str) {
+        let full_path = Path::new(&self.repo_path).join(rel_path);
+        if full_path.exists() {
+            if full_path.is_dir() {
+                let _ = std::fs::remove_dir_all(&full_path);
+            } else {
+                let _ = std::fs::remove_file(&full_path);
+            }
+        }
+        let _ = Command::new("git")
+            .args(["rm", "-f", rel_path])
+            .current_dir(&self.repo_path)
+            .status();
+        self.status_message = format!("Deleted {}", rel_path);
+        self.refresh_all();
+    }
+
+    pub fn select_prev_file(&mut self) {
+        if self.files.is_empty() {
+            return;
+        }
+        let current_idx = self.files.iter().position(|f| Some(&f.path) == self.selected_file_path.as_ref()).unwrap_or(0);
+        let prev_idx = if current_idx == 0 { self.files.len() - 1 } else { current_idx - 1 };
+        let path = self.files[prev_idx].path.clone();
+        self.selected_file_path = Some(path.clone());
+        self.load_diff_for_file(&path);
+    }
+
+    pub fn select_next_file(&mut self) {
+        if self.files.is_empty() {
+            return;
+        }
+        let current_idx = self.files.iter().position(|f| Some(&f.path) == self.selected_file_path.as_ref()).unwrap_or(0);
+        let next_idx = (current_idx + 1) % self.files.len();
+        let path = self.files[next_idx].path.clone();
+        self.selected_file_path = Some(path.clone());
+        self.load_diff_for_file(&path);
     }
 
     pub fn commit(&mut self) -> bool {
@@ -361,27 +407,31 @@ impl GitApp {
             return false;
         }
 
-        let out = Command::new("git")
-            .args(["commit", "-m", self.commit_message.trim()])
-            .current_dir(&self.repo_path)
-            .output();
+        let mut args = vec!["commit"];
+        if self.amend_last_commit {
+            args.push("--amend");
+        }
+        let msg = self.commit_message.trim().to_string();
+        args.extend(["-m", &msg]);
 
-        match out {
-            Ok(res) if res.status.success() => {
-                self.status_message = "Committed successfully!".to_string();
+        if let Ok(out) = Command::new("git")
+            .args(&args)
+            .current_dir(&self.repo_path)
+            .output()
+        {
+            if out.status.success() {
+                self.status_message = "Committed successfully".to_string();
                 self.commit_message.clear();
                 self.refresh_all();
                 true
-            }
-            Ok(res) => {
-                let err = String::from_utf8_lossy(&res.stderr);
-                self.status_message = format!("Commit failed: {}", err.trim());
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                self.status_message = format!("Error: {}", err.trim());
                 false
             }
-            Err(e) => {
-                self.status_message = format!("Commit error: {}", e);
-                false
-            }
+        } else {
+            self.status_message = "Error executing git commit".to_string();
+            false
         }
     }
 
@@ -512,9 +562,9 @@ pub fn compute_side_by_side_diff(left_str: &str, right_str: &str) -> (Vec<DiffRo
             let mut ahead_i = i;
             let mut ahead_j = j;
 
-            // Search up to 15 lines ahead for sync point
-            'search: for di in 0..15 {
-                for dj in 0..15 {
+            // Search up to 30 lines ahead for sync point
+            'search: for di in 0..30 {
+                for dj in 0..30 {
                     if di == 0 && dj == 0 {
                         continue;
                     }
@@ -546,78 +596,60 @@ pub fn compute_side_by_side_diff(left_str: &str, right_str: &str) -> (Vec<DiffRo
                 });
             }
 
-            if match_found {
-                let left_diff_count = ahead_i - i;
-                let right_diff_count = ahead_j - j;
+            let (target_i, target_j) = if match_found {
+                (ahead_i, ahead_j)
+            } else {
+                (left_lines.len(), right_lines.len())
+            };
 
-                let max_diff = left_diff_count.max(right_diff_count);
-                for k in 0..max_diff {
-                    let l_line = if k < left_diff_count { Some(i + k + 1) } else { None };
-                    let l_txt = if k < left_diff_count { left_lines[i + k].to_string() } else { String::new() };
+            let left_diff_count = target_i - i;
+            let right_diff_count = target_j - j;
 
-                    let r_line = if k < right_diff_count { Some(j + k + 1) } else { None };
-                    let r_txt = if k < right_diff_count { right_lines[j + k].to_string() } else { String::new() };
-
-                    let kind = if l_line.is_some() && r_line.is_some() {
-                        DiffKind::Modified
-                    } else if l_line.is_some() {
-                        DiffKind::Deleted
-                    } else {
-                        DiffKind::Added
-                    };
-
+            if left_diff_count == right_diff_count {
+                // Direct 1-to-1 line replacements (Modified)
+                for k in 0..left_diff_count {
                     rows.push(DiffRow {
-                        left_line_num: l_line,
-                        left_text: l_txt,
-                        right_line_num: r_line,
-                        right_text: r_txt,
-                        kind,
+                        left_line_num: Some(i + k + 1),
+                        left_text: left_lines[i + k].to_string(),
+                        right_line_num: Some(j + k + 1),
+                        right_text: right_lines[j + k].to_string(),
+                        kind: DiffKind::Modified,
                         hunk_idx: Some(hunk_id),
                     });
                 }
-
-                if let Some(h) = current_hunk.as_mut() {
-                    h.end_row = rows.len() - 1;
-                    h.left_line_count += left_diff_count;
-                    h.right_line_count += right_diff_count;
-                }
-
-                i = ahead_i;
-                j = ahead_j;
             } else {
-                // Drain remaining lines to end of file
-                let l_line = if i < left_lines.len() { Some(i + 1) } else { None };
-                let l_txt = if i < left_lines.len() { left_lines[i].to_string() } else { String::new() };
-
-                let r_line = if j < right_lines.len() { Some(j + 1) } else { None };
-                let r_txt = if j < right_lines.len() { right_lines[j].to_string() } else { String::new() };
-
-                let kind = if l_line.is_some() && r_line.is_some() {
-                    DiffKind::Modified
-                } else if l_line.is_some() {
-                    DiffKind::Deleted
-                } else {
-                    DiffKind::Added
-                };
-
-                rows.push(DiffRow {
-                    left_line_num: l_line,
-                    left_text: l_txt,
-                    right_line_num: r_line,
-                    right_text: r_txt,
-                    kind,
-                    hunk_idx: Some(hunk_id),
-                });
-
-                if let Some(h) = current_hunk.as_mut() {
-                    h.end_row = rows.len() - 1;
-                    if l_line.is_some() { h.left_line_count += 1; }
-                    if r_line.is_some() { h.right_line_count += 1; }
+                // Block Deletion on Left with Blank Padding on Right
+                for k in 0..left_diff_count {
+                    rows.push(DiffRow {
+                        left_line_num: Some(i + k + 1),
+                        left_text: left_lines[i + k].to_string(),
+                        right_line_num: None,
+                        right_text: String::new(),
+                        kind: DiffKind::Deleted,
+                        hunk_idx: Some(hunk_id),
+                    });
                 }
-
-                if i < left_lines.len() { i += 1; }
-                if j < right_lines.len() { j += 1; }
+                // Block Addition on Right with Blank Padding on Left
+                for k in 0..right_diff_count {
+                    rows.push(DiffRow {
+                        left_line_num: None,
+                        left_text: String::new(),
+                        right_line_num: Some(j + k + 1),
+                        right_text: right_lines[j + k].to_string(),
+                        kind: DiffKind::Added,
+                        hunk_idx: Some(hunk_id),
+                    });
+                }
             }
+
+            if let Some(h) = current_hunk.as_mut() {
+                h.end_row = rows.len() - 1;
+                h.left_line_count += left_diff_count;
+                h.right_line_count += right_diff_count;
+            }
+
+            i = target_i;
+            j = target_j;
         }
     }
 
@@ -650,451 +682,706 @@ impl WindowApp for GitApp {
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         _config: &mut crate::ui::settings::AppConfig,
+        undo: &mut crate::ui::undo_manager::UndoManager,
     ) -> Option<WindowAction> {
+        if self.needs_refresh {
+            self.refresh_all();
+            self.needs_refresh = false;
+        }
+
         let is_dark = ctx.style().visuals.dark_mode;
+        let dark = |r: u8, g: u8, b: u8| egui::Color32::from_rgb(r, g, b);
+        let gray = |v: u8| egui::Color32::from_gray(v);
 
-        let bg_color = if is_dark {
-            egui::Color32::from_rgb(22, 22, 26)
-        } else {
-            egui::Color32::from_rgb(248, 248, 250)
-        };
+        // IntelliJ IDEA Dark Theme Palette
+        let panel_bg  = if is_dark { dark(43, 45, 48) } else { dark(240, 240, 245) };  // #2b2d30
+        let diff_bg   = if is_dark { dark(30, 31, 34) } else { dark(255, 255, 255) };  // #1e1f22
+        let border_c  = if is_dark { dark(57, 59, 64) } else { gray(210) };             // #393b40
+        let commit_bg = if is_dark { dark(30, 31, 34) } else { dark(245, 245, 250) };  // #1e1f22
+        let hdr_bg    = if is_dark { dark(37, 38, 42) } else { dark(235, 235, 240) };  // #25262a
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(bg_color))
-            .show_inside(ui, |ui| {
-                // ===============================================
-                // TOP TOOLBAR
-                // ===============================================
-                let top_frame = egui::Frame::default()
-                    .fill(if is_dark { egui::Color32::from_rgb(30, 30, 36) } else { egui::Color32::from_rgb(235, 235, 240) })
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                    .stroke(egui::Stroke::new(1.0, if is_dark { egui::Color32::from_gray(45) } else { egui::Color32::from_gray(210) }));
+        let total_size = ui.available_size();
 
-                top_frame.show(ui, |ui| {
+        // Constrain layout to available space so the window doesn't grow unbounded
+        ui.set_max_width(total_size.x);
+        ui.set_max_height(total_size.y);
+
+        ui.vertical(|ui| {
+            // =========================================================================
+            // 1. TOP GLOBAL TOOLBAR (IntelliJ Style Git Toolbar)
+            // =========================================================================
+            egui::Frame::default()
+                .fill(hdr_bg)
+                .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                .stroke(egui::Stroke::new(1.0, border_c))
+                .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        // Branch Selector
                         ui.label(Icons::rich(Icons::GIT_BRANCH, 14.0));
                         ui.menu_button(
-                            egui::RichText::new(&self.current_branch).strong().size(13.0),
+                            egui::RichText::new(format!("Branch: {}", self.current_branch)).strong().size(12.5),
                             |ui| {
-                                ui.set_min_width(200.0);
+                                ui.set_min_width(180.0);
                                 ui.label(egui::RichText::new("Switch Branch").weak().size(11.0));
                                 ui.separator();
-
                                 let branches = self.branches.clone();
                                 for b in branches {
-                                    let is_active = b == self.current_branch;
-                                    if ui.selectable_label(is_active, &b).clicked() {
+                                    if ui.selectable_label(b == self.current_branch, &b).clicked() {
+                                        undo.push(crate::ui::undo_manager::UndoAction::GitSwitchBranch { 
+                                            repo_path: self.repo_path.clone(), 
+                                            previous_branch: self.current_branch.clone(),
+                                        }, format!("Switch branch to {}", b));
                                         self.switch_branch(&b);
                                         ui.close_menu();
                                     }
                                 }
-
                                 ui.separator();
-                                if ui.button(format!("{} New Branch...", Icons::ADD)).clicked() {
+                                if ui.button(format!("{} New Branch", Icons::ADD)).clicked() {
                                     self.is_creating_branch = true;
                                     ui.close_menu();
                                 }
                             },
                         );
-
                         if self.is_creating_branch {
-                            ui.add_space(8.0);
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.new_branch_name)
-                                    .hint_text("Branch name...")
-                                    .desired_width(120.0),
-                            );
+                            ui.add_space(4.0);
+                            ui.add(egui::TextEdit::singleline(&mut self.new_branch_name)
+                                .hint_text("Branch name...").desired_width(100.0));
                             if ui.button(Icons::rich(Icons::CHECK, 12.0)).clicked() {
-                                let name = self.new_branch_name.clone();
-                                self.create_branch(&name);
+                                let n = self.new_branch_name.clone();
+                                undo.push(crate::ui::undo_manager::UndoAction::GitCreateBranch { 
+                                    repo_path: self.repo_path.clone(), 
+                                    branch_name: n.clone(),
+                                    previous_branch: self.current_branch.clone(),
+                                }, format!("Create branch: {}", n));
+                                self.create_branch(&n);
                             }
                             if ui.button(Icons::rich(Icons::CLOSE, 12.0)).clicked() {
                                 self.is_creating_branch = false;
                             }
                         }
-
-                        ui.add_space(16.0);
-                        ui.separator();
                         ui.add_space(8.0);
-
-                        // Actions
-                        if ui.button(format!("{} Refresh", Icons::REFRESH)).clicked() {
-                            self.refresh_all();
-                        }
-                        if ui.button(format!("{} Pull", Icons::CARET_DOWN_KEY)).clicked() {
-                            self.pull();
-                        }
-                        if ui.button(format!("{} Push", Icons::CARET_UP_KEY)).clicked() {
-                            self.push();
-                        }
+                        ui.separator();
+                        ui.add_space(6.0);
+                        if ui.button(Icons::job(Icons::REFRESH, "Refresh", 12.0)).clicked()       { self.refresh_all(); }
+                        if ui.button(Icons::job(Icons::CARET_DOWN_KEY, "Pull", 12.0)).clicked()    { self.pull(); }
+                        if ui.button(Icons::job(Icons::CARET_UP_KEY, "Push", 12.0)).clicked()      { self.push(); }
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let msg_color = if self.status_message.starts_with("Error") {
+                            let c = if self.status_message.starts_with("Error") {
                                 egui::Color32::from_rgb(240, 90, 90)
-                            } else {
-                                ui.visuals().weak_text_color()
-                            };
-                            ui.label(egui::RichText::new(&self.status_message).size(12.0).color(msg_color));
+                            } else { ui.visuals().weak_text_color() };
+                            ui.label(egui::RichText::new(&self.status_message).size(12.0).color(c));
                         });
                     });
                 });
 
-                ui.add_space(2.0);
+            ui.add_space(2.0);
 
-                // ===============================================
-                // MAIN BODY: SPLIT LEFT (CHANGES) AND RIGHT (DIFF)
-                // ===============================================
-                ui.columns(2, |columns| {
-                    // -------------------------------------------
-                    // LEFT PANEL: STAGED & UNSTAGED CHANGES
-                    // -------------------------------------------
-                    let left_ui = &mut columns[0];
-                    left_ui.set_max_width(300.0);
+            // =========================================================================
+            // 2. MAIN SPLIT BODY (IntelliJ Commit Sidebar + Diff Pane)
+            // =========================================================================
+            let body_h = (total_size.y - 42.0).max(100.0);
+            let sidebar_w = 280.0_f32;
+            let diff_w = (total_size.x - sidebar_w - 10.0).max(200.0);
 
-                    let panel_frame = egui::Frame::default()
-                        .fill(if is_dark { egui::Color32::from_rgb(26, 26, 32) } else { egui::Color32::from_rgb(240, 240, 245) })
-                        .inner_margin(8.0)
-                        .rounding(6.0);
+            ui.horizontal(|ui| {
+                // ---------------------------------------------------------------------
+                // A) LEFT SIDEBAR (IntelliJ Commit / Changes Panel)
+                // ---------------------------------------------------------------------
+                egui::Frame::default()
+                    .fill(panel_bg)
+                    .inner_margin(6.0)
+                    .rounding(4.0)
+                    .stroke(egui::Stroke::new(1.0, border_c))
+                    .show(ui, |ui| {
+                        ui.set_width(sidebar_w);
+                        ui.set_height(body_h);
 
-                    panel_frame.show(left_ui, |ui| {
-                        let staged_count = self.files.iter().filter(|f| f.staged).count();
-                        let unstaged_count = self.files.iter().filter(|f| !f.staged).count();
+                        ui.vertical(|ui| {
+                            let staged_n   = self.files.iter().filter(|f|  f.staged).count();
+                            let unstaged_n = self.files.iter().filter(|f| !f.staged).count();
 
-                        // Header & Stage All / Unstage All
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Local Changes").strong().size(13.0));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("Stage All").clicked() {
-                                    self.stage_all();
-                                }
-                                if ui.button("Unstage All").clicked() {
-                                    self.unstage_all();
-                                }
+                            // Sidebar Header
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Commit").strong().size(13.0));
+                                ui.label(egui::RichText::new(format!("({} files)", self.files.len())).weak().size(11.5));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button("Stage All").clicked() {
+                                        undo.push(crate::ui::undo_manager::UndoAction::GitStageAll { 
+                                            repo_path: self.repo_path.clone() 
+                                        }, "Stage all");
+                                        self.stage_all(); 
+                                    }
+                                    if ui.small_button("Unstage All").clicked() {
+                                        undo.push(crate::ui::undo_manager::UndoAction::GitUnstageAll { 
+                                            repo_path: self.repo_path.clone() 
+                                        }, "Unstage all");
+                                        self.unstage_all(); 
+                                    }
+                                });
                             });
-                        });
-                        ui.separator();
+                            ui.separator();
 
-                        egui::ScrollArea::vertical()
-                            .max_height(360.0)
-                            .show(ui, |ui| {
-                                // STAGED CHANGES
-                                ui.collapsing(
-                                    egui::RichText::new(format!("Staged Changes ({})", staged_count))
-                                        .strong()
-                                        .size(12.0),
-                                    |ui| {
-                                        let staged_files: Vec<GitFileItem> = self.files.iter().filter(|f| f.staged).cloned().collect();
-                                        if staged_files.is_empty() {
-                                            ui.label(egui::RichText::new("No staged files").weak().size(11.0));
-                                        } else {
-                                            for item in staged_files {
-                                                let is_sel = self.selected_file_path.as_deref() == Some(&item.path);
-                                                ui.horizontal(|ui| {
-                                                    if ui.button("-").on_hover_text("Unstage file").clicked() {
-                                                        let path = item.path.clone();
-                                                        self.unstage_file(&path);
+                            // Top File Tree (Fills available space above commit box)
+                            let commit_box_h = 150.0_f32;
+                            let tree_h = (body_h - commit_box_h - 24.0).max(80.0);
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(sidebar_w - 12.0, tree_h),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("git_sidebar_file_tree_scroll")
+                                        .auto_shrink([false, false])
+                                        .max_height(tree_h)
+                                        .show(ui, |ui| {
+                                            // STAGED CHANGES
+                                            ui.collapsing(
+                                                egui::RichText::new(format!("Staged Changes ({})", staged_n))
+                                                    .strong().size(11.5),
+                                                |ui| {
+                                                    let items: Vec<GitFileItem> = self.files.iter()
+                                                        .filter(|f| f.staged).cloned().collect();
+                                                    if items.is_empty() {
+                                                        ui.label(egui::RichText::new("No staged files").weak().size(11.0));
                                                     }
-                                                    let resp = ui.selectable_label(
-                                                        is_sel,
-                                                        format!("{} {}", Icons::get_file_icon(&item.path), item.path),
-                                                    );
-                                                    if resp.clicked() {
-                                                        let path = item.path.clone();
-                                                        self.selected_file_path = Some(path.clone());
-                                                        self.load_diff_for_file(&path);
+                                                    for item in items {
+                                                        let sel = self.selected_file_path.as_deref() == Some(&item.path);
+                                                        ui.push_id(format!("staged_{}", item.path), |ui| {
+                                                            ui.horizontal(|ui| {
+                                                                let mut chk = true;
+                                                                if ui.checkbox(&mut chk, "").changed() {
+                                                                    let p = item.path.clone();
+                                                                    undo.push(crate::ui::undo_manager::UndoAction::GitUnstageFile { 
+                                                                        repo_path: self.repo_path.clone(), 
+                                                                        rel_path: p.clone() 
+                                                                    }, format!("Unstage: {}", p));
+                                                                    self.unstage_file(&p);
+                                                                }
+                                                                if ui.selectable_label(sel,
+                                                                    format!("{} {}", Icons::get_file_icon(&item.path), item.path)
+                                                                ).clicked() {
+                                                                    let p = item.path.clone();
+                                                                    self.selected_file_path = Some(p.clone());
+                                                                    self.load_diff_for_file(&p);
+                                                                }
+                                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                    let p = item.path.clone();
+                                                                    if ui.small_button("D").on_hover_text("Delete file").clicked() {
+                                                                        let full_path = std::path::Path::new(&self.repo_path).join(&p);
+                                                                        let was_dir = full_path.is_dir();
+                                                                        let saved = if was_dir { Vec::new() } else { std::fs::read(&full_path).unwrap_or_default() };
+                                                                        undo.push(crate::ui::undo_manager::UndoAction::GitDeleteFile { 
+                                                                            repo_path: self.repo_path.clone(), 
+                                                                            rel_path: p.clone(),
+                                                                            saved_content: saved,
+                                                                            was_dir,
+                                                                        }, format!("Delete: {}", p));
+                                                                        self.delete_file(&p);
+                                                                    }
+                                                                    ui.label(egui::RichText::new(item.status.label())
+                                                                        .size(9.0).color(item.status.color()));
+                                                                });
+                                                            });
+                                                        });
                                                     }
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(
-                                                            egui::RichText::new(item.status.label())
-                                                                .size(9.0)
-                                                                .color(item.status.color()),
-                                                        );
-                                                    });
-                                                });
-                                            }
-                                        }
-                                    },
-                                );
+                                                },
+                                            );
 
-                                ui.add_space(4.0);
+                                            ui.add_space(4.0);
 
-                                // UNSTAGED CHANGES
-                                ui.collapsing(
-                                    egui::RichText::new(format!("Unstaged Changes ({})", unstaged_count))
-                                        .strong()
-                                        .size(12.0),
-                                    |ui| {
-                                        let unstaged_files: Vec<GitFileItem> = self.files.iter().filter(|f| !f.staged).cloned().collect();
-                                        if unstaged_files.is_empty() {
-                                            ui.label(egui::RichText::new("No modified files").weak().size(11.0));
-                                        } else {
-                                            for item in unstaged_files {
-                                                let is_sel = self.selected_file_path.as_deref() == Some(&item.path);
-                                                ui.horizontal(|ui| {
-                                                    if ui.button("+").on_hover_text("Stage file").clicked() {
-                                                        let path = item.path.clone();
-                                                        self.stage_file(&path);
+                                            // UNSTAGED / UNVERSIONED
+                                            ui.collapsing(
+                                                egui::RichText::new(format!("Unstaged & Unversioned ({})", unstaged_n))
+                                                    .strong().size(11.5),
+                                                |ui| {
+                                                    let items: Vec<GitFileItem> = self.files.iter()
+                                                        .filter(|f| !f.staged).cloned().collect();
+                                                    if items.is_empty() {
+                                                        ui.label(egui::RichText::new("No unstaged files").weak().size(11.0));
                                                     }
-                                                    if ui.button(Icons::rich(Icons::REFRESH, 10.0)).on_hover_text("Revert changes").clicked() {
-                                                        let path = item.path.clone();
-                                                        self.revert_file(&path);
+                                                    for item in items {
+                                                        let sel = self.selected_file_path.as_deref() == Some(&item.path);
+                                                        ui.push_id(format!("unstaged_{}", item.path), |ui| {
+                                                            ui.horizontal(|ui| {
+                                                                let mut chk = false;
+                                                                if ui.checkbox(&mut chk, "").changed() {
+                                                                    let p = item.path.clone();
+                                                                    undo.push(crate::ui::undo_manager::UndoAction::GitStageFile { 
+                                                                        repo_path: self.repo_path.clone(), 
+                                                                        rel_path: p.clone() 
+                                                                    }, format!("Stage: {}", p));
+                                                                    self.stage_file(&p);
+                                                                }
+                                                                if ui.selectable_label(sel,
+                                                                    format!("{} {}", Icons::get_file_icon(&item.path), item.path)
+                                                                ).clicked() {
+                                                                    let p = item.path.clone();
+                                                                    self.selected_file_path = Some(p.clone());
+                                                                    self.load_diff_for_file(&p);
+                                                                }
+                                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                    let p = item.path.clone();
+                                                                    if ui.small_button("D").on_hover_text("Delete file").clicked() {
+                                                                        let full_path = std::path::Path::new(&self.repo_path).join(&p);
+                                                                        let was_dir = full_path.is_dir();
+                                                                        let saved = if was_dir { Vec::new() } else { std::fs::read(&full_path).unwrap_or_default() };
+                                                                        undo.push(crate::ui::undo_manager::UndoAction::GitDeleteFile { 
+                                                                            repo_path: self.repo_path.clone(), 
+                                                                            rel_path: p.clone(),
+                                                                            saved_content: saved,
+                                                                            was_dir,
+                                                                        }, format!("Delete: {}", p));
+                                                                        self.delete_file(&p);
+                                                                    }
+                                                                    if ui.small_button("R").on_hover_text("Revert file").clicked() {
+                                                                        let full_path = std::path::Path::new(&self.repo_path).join(&p);
+                                                                        let saved = std::fs::read(&full_path).unwrap_or_default();
+                                                                        undo.push(crate::ui::undo_manager::UndoAction::GitRevertFile { 
+                                                                            repo_path: self.repo_path.clone(), 
+                                                                            rel_path: p.clone(),
+                                                                            saved_content: saved,
+                                                                        }, format!("Revert: {}", p));
+                                                                        self.revert_file(&p);
+                                                                    }
+                                                                    ui.label(egui::RichText::new(item.status.label())
+                                                                        .size(9.0).color(item.status.color()));
+                                                                });
+                                                            });
+                                                        });
                                                     }
-                                                    let resp = ui.selectable_label(
-                                                        is_sel,
-                                                        format!("{} {}", Icons::get_file_icon(&item.path), item.path),
-                                                    );
-                                                    if resp.clicked() {
-                                                        let path = item.path.clone();
-                                                        self.selected_file_path = Some(path.clone());
-                                                        self.load_diff_for_file(&path);
-                                                    }
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(
-                                                            egui::RichText::new(item.status.label())
-                                                                .size(9.0)
-                                                                .color(item.status.color()),
-                                                        );
-                                                    });
-                                                });
-                                            }
-                                        }
-                                    },
-                                );
-                            });
+                                                },
+                                            );
+                                        });
+                                },
+                            );
 
-                        ui.separator();
-                        ui.add_space(4.0);
+                            ui.separator();
 
-                        // COMMIT BOX
-                        ui.label(egui::RichText::new("Commit Message").strong().size(12.0));
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.commit_message)
-                                .hint_text("Write commit message...")
-                                .desired_rows(3)
-                                .desired_width(ui.available_width()),
-                        );
-                        ui.add_space(4.0);
-
-                        ui.horizontal(|ui| {
-                            if ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(format!("{} Commit", Icons::GIT_COMMIT))
-                                        .strong()
-                                        .color(egui::Color32::WHITE),
-                                )
-                                .fill(egui::Color32::from_rgb(45, 125, 220))
+                            // Bottom Commit Box (Docked cleanly at the bottom of sidebar)
+                            egui::Frame::default()
+                                .fill(commit_bg)
+                                .inner_margin(6.0)
                                 .rounding(4.0)
-                                .min_size(egui::vec2(90.0, 28.0)),
-                            ).clicked() {
-                                self.commit();
-                            }
-
-                            if ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new("Commit & Push")
-                                        .strong()
-                                        .color(egui::Color32::WHITE),
-                                )
-                                .fill(egui::Color32::from_rgb(35, 150, 100))
-                                .rounding(4.0)
-                                .min_size(egui::vec2(110.0, 28.0)),
-                            ).clicked() {
-                                if self.commit() {
-                                    self.push();
-                                }
-                            }
+                                .stroke(egui::Stroke::new(1.0, border_c))
+                                .show(ui, |ui| {
+                                    ui.set_width(sidebar_w - 16.0);
+                                    ui.checkbox(&mut self.amend_last_commit, "Amend commit");
+                                    ui.add_space(2.0);
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut self.commit_message)
+                                            .hint_text("Write commit message...")
+                                            .desired_rows(3)
+                                            .desired_width(ui.available_width()),
+                                    );
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        let bw = (ui.available_width() - 4.0) / 2.0;
+                                        if ui.add(
+                                            egui::Button::new(egui::RichText::new("Commit")
+                                                .strong().color(egui::Color32::WHITE))
+                                            .fill(dark(53, 116, 240)).rounding(4.0)
+                                            .min_size(egui::vec2(bw, 26.0))
+                                        ).clicked() {
+                                            let prev_head = std::process::Command::new("git")
+                                                .args(["-C", &self.repo_path, "rev-parse", "HEAD"])
+                                                .output().ok()
+                                                .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None });
+                                            undo.push(crate::ui::undo_manager::UndoAction::GitCommit { 
+                                                repo_path: self.repo_path.clone(), 
+                                                was_amend: self.amend_last_commit,
+                                                prev_head,
+                                            }, "Commit");
+                                            self.commit(); 
+                                        }
+                                        if ui.add(
+                                            egui::Button::new(egui::RichText::new("Commit & Push")
+                                                .strong().color(egui::Color32::WHITE))
+                                            .fill(dark(45, 142, 87)).rounding(4.0)
+                                            .min_size(egui::vec2(bw, 26.0))
+                                        ).clicked() {
+                                            if self.commit() { self.push(); }
+                                        }
+                                    });
+                                });
                         });
                     });
 
-                    // -------------------------------------------
-                    // RIGHT PANEL: INTELLIJ SIDE-BY-SIDE DIFF VIEWER
-                    // -------------------------------------------
-                    let right_ui = &mut columns[1];
+                ui.add_space(4.0);
 
-                    let diff_frame = egui::Frame::default()
-                        .fill(if is_dark { egui::Color32::from_rgb(18, 18, 22) } else { egui::Color32::from_rgb(255, 255, 255) })
-                        .inner_margin(8.0)
-                        .rounding(6.0)
-                        .stroke(egui::Stroke::new(1.0, if is_dark { egui::Color32::from_gray(40) } else { egui::Color32::from_gray(210) }));
+                // ---------------------------------------------------------------------
+                // B) RIGHT PANEL (IntelliJ Side-by-Side Diff View)
+                // ---------------------------------------------------------------------
+                egui::Frame::default()
+                    .fill(diff_bg)
+                    .inner_margin(4.0)
+                    .rounding(4.0)
+                    .stroke(egui::Stroke::new(1.0, border_c))
+                    .show(ui, |ui| {
+                        ui.set_width(diff_w);
+                        ui.set_height(body_h);
 
-                    diff_frame.show(right_ui, |ui| {
-                        let selected_path = match &self.selected_file_path {
-                            Some(p) => p.clone(),
-                            None => {
-                                ui.centered_and_justified(|ui| {
-                                    ui.label(
-                                        egui::RichText::new("Select a changed file on the left to view diff")
-                                            .weak()
-                                            .size(14.0),
-                                    );
-                                });
-                                return;
-                            }
-                        };
-
-                        // DIFF TOOLBAR HEADER
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!("{} {}", Icons::get_file_icon(&selected_path), selected_path))
-                                    .strong()
-                                    .size(13.0),
-                            );
-
-                            let (add_count, del_count) = self.diff_rows.iter().fold((0, 0), |(a, d), r| match r.kind {
-                                DiffKind::Added => (a + 1, d),
-                                DiffKind::Deleted => (a, d + 1),
-                                DiffKind::Modified => (a + 1, d + 1),
-                                _ => (a, d),
-                            });
-
-                            ui.label(
-                                egui::RichText::new(format!("+{} / -{} lines", add_count, del_count))
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(100, 200, 140)),
-                            );
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let path = selected_path.clone();
-                                if ui.button("Revert File").clicked() {
-                                    self.revert_file(&path);
+                        ui.vertical(|ui| {
+                            let selected_path = match self.selected_file_path.clone() {
+                                Some(p) => p,
+                                None => {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.label(egui::RichText::new(
+                                            "Select a changed file on the left to view diff")
+                                            .weak().size(14.0));
+                                    });
+                                    return;
                                 }
-                                if ui.button("Stage File").clicked() {
-                                    self.stage_file(&path);
+                            };
+
+                            let cur_idx = self.files.iter()
+                                .position(|f| f.path == selected_path)
+                                .map(|i| i + 1).unwrap_or(1);
+                            let total = self.files.len().max(1);
+                            let (add_n, del_n) = self.diff_rows.iter().fold((0usize, 0usize), |(a, d), r| {
+                                match r.kind {
+                                    DiffKind::Added    => (a + 1, d),
+                                    DiffKind::Deleted  => (a, d + 1),
+                                    DiffKind::Modified => (a + 1, d + 1),
+                                    _                  => (a, d),
                                 }
                             });
-                        });
-                        ui.separator();
 
-                        // SIDE-BY-SIDE DUAL PANE HEADER
-                        ui.horizontal(|ui| {
-                            let half_w = (ui.available_width() - 40.0) / 2.0;
-                            ui.allocate_ui(egui::vec2(half_w, 20.0), |ui| {
-                                ui.label(egui::RichText::new("HEAD (Original)").weak().strong().size(11.5));
-                            });
-                            ui.allocate_ui(egui::vec2(36.0, 20.0), |ui| {
-                                ui.centered_and_justified(|ui| {
-                                    ui.label(egui::RichText::new("Action").weak().size(10.0));
-                                });
-                            });
-                            ui.allocate_ui(egui::vec2(half_w, 20.0), |ui| {
-                                ui.label(egui::RichText::new("Working Copy (Modified)").weak().strong().size(11.5));
-                            });
-                        });
-                        ui.separator();
-
-                        // SIDE-BY-SIDE DIFF BODY WITH GUTTER CONTROLS
-                        let mut hunk_to_revert: Option<usize> = None;
-
-                        egui::ScrollArea::both().show(ui, |ui| {
-                            let total_w = ui.available_width();
-                            let col_w = (total_w - 46.0) / 2.0;
-
-                            for (r_idx, row) in self.diff_rows.iter().enumerate() {
-                                let (bg_color, _text_color) = match row.kind {
-                                    DiffKind::Added => (
-                                        if is_dark { egui::Color32::from_rgba_unmultiplied(40, 140, 70, 50) } else { egui::Color32::from_rgba_unmultiplied(180, 240, 190, 80) },
-                                        egui::Color32::from_rgb(100, 220, 140),
-                                    ),
-                                    DiffKind::Deleted => (
-                                        if is_dark { egui::Color32::from_rgba_unmultiplied(180, 50, 50, 50) } else { egui::Color32::from_rgba_unmultiplied(255, 200, 200, 80) },
-                                        egui::Color32::from_rgb(240, 100, 100),
-                                    ),
-                                    DiffKind::Modified => (
-                                        if is_dark { egui::Color32::from_rgba_unmultiplied(50, 90, 160, 50) } else { egui::Color32::from_rgba_unmultiplied(200, 220, 255, 80) },
-                                        egui::Color32::from_rgb(100, 180, 255),
-                                    ),
-                                    DiffKind::Conflict => (
-                                        if is_dark { egui::Color32::from_rgba_unmultiplied(180, 120, 30, 60) } else { egui::Color32::from_rgba_unmultiplied(255, 230, 180, 90) },
-                                        egui::Color32::from_rgb(255, 180, 60),
-                                    ),
-                                    DiffKind::Equal => (egui::Color32::TRANSPARENT, ui.visuals().text_color()),
-                                };
-
-                                let row_frame = egui::Frame::none().fill(bg_color);
-
-                                row_frame.show(ui, |ui| {
+                            // Diff File Header Toolbar (IntelliJ Diff Header)
+                            egui::Frame::default()
+                                .fill(hdr_bg)
+                                .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                .stroke(egui::Stroke::new(1.0, border_c))
+                                .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        // LEFT PANE (Original)
-                                        ui.allocate_ui(egui::vec2(col_w, 18.0), |ui| {
-                                            ui.horizontal(|ui| {
-                                                let line_str = row.left_line_num.map(|n| n.to_string()).unwrap_or_default();
-                                                ui.label(
-                                                    egui::RichText::new(format!("{:>4}", line_str))
-                                                        .size(11.0)
-                                                        .weak()
-                                                        .family(egui::FontFamily::Monospace),
-                                                );
-                                                ui.add_space(4.0);
-                                                ui.label(
-                                                    egui::RichText::new(&row.left_text)
-                                                        .size(11.5)
-                                                        .family(egui::FontFamily::Monospace),
-                                                );
-                                            });
-                                        });
-
-                                        // CENTER GUTTER (IntelliJ Move / Apply / Revert Actions)
-                                        ui.allocate_ui(egui::vec2(40.0, 18.0), |ui| {
-                                            ui.centered_and_justified(|ui| {
-                                                if let Some(h_idx) = row.hunk_idx {
-                                                    // Display action button once per hunk (on first line of hunk)
-                                                    let is_hunk_start = self.diff_hunks.iter().any(|h| h.hunk_idx == h_idx && h.start_row == r_idx);
-                                                    if is_hunk_start {
-                                                        let apply_btn = ui.add(
-                                                            egui::Button::new(
-                                                                egui::RichText::new("≫")
-                                                                    .strong()
-                                                                    .size(11.0)
-                                                                    .color(egui::Color32::from_rgb(100, 200, 255)),
-                                                            )
-                                                            .fill(egui::Color32::TRANSPARENT)
-                                                            .min_size(egui::vec2(18.0, 16.0)),
-                                                        ).on_hover_text("Accept / Apply hunk from left to right (IntelliJ Move)");
-
-                                                        if apply_btn.clicked() {
-                                                            hunk_to_revert = Some(h_idx);
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        });
-
-                                        // RIGHT PANE (Modified)
-                                        ui.allocate_ui(egui::vec2(col_w, 18.0), |ui| {
-                                            ui.horizontal(|ui| {
-                                                let line_str = row.right_line_num.map(|n| n.to_string()).unwrap_or_default();
-                                                ui.label(
-                                                    egui::RichText::new(format!("{:>4}", line_str))
-                                                        .size(11.0)
-                                                        .weak()
-                                                        .family(egui::FontFamily::Monospace),
-                                                );
-                                                ui.add_space(4.0);
-                                                ui.label(
-                                                    egui::RichText::new(&row.right_text)
-                                                        .size(11.5)
-                                                        .family(egui::FontFamily::Monospace),
-                                                );
-                                            });
+                                        if ui.small_button("\u{25b2}").on_hover_text("Previous file").clicked() { self.select_prev_file(); }
+                                        if ui.small_button("\u{25bc}").on_hover_text("Next file").clicked()     { self.select_next_file(); }
+                                        ui.label(egui::RichText::new(format!("{}/{}", cur_idx, total)).size(11.0).weak());
+                                        ui.add_space(6.0); ui.separator(); ui.add_space(6.0);
+                                        ui.label(egui::RichText::new(
+                                            format!("{} {}", Icons::get_file_icon(&selected_path), selected_path))
+                                            .strong().size(12.5));
+                                        ui.label(egui::RichText::new(format!("+{} / -{}", add_n, del_n))
+                                            .size(11.0).color(egui::Color32::from_rgb(100, 200, 140)));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let p = selected_path.clone();
+                                            if ui.button("Revert File").clicked() {
+                                                let full_path = std::path::Path::new(&self.repo_path).join(&p);
+                                                let saved = std::fs::read(&full_path).unwrap_or_default();
+                                                undo.push(crate::ui::undo_manager::UndoAction::GitRevertFile { 
+                                                    repo_path: self.repo_path.clone(), 
+                                                    rel_path: p.clone(),
+                                                    saved_content: saved,
+                                                }, format!("Revert: {}", p));
+                                                self.revert_file(&p);
+                                            }
+                                            if ui.button("Stage File").clicked()  {
+                                                undo.push(crate::ui::undo_manager::UndoAction::GitStageFile { 
+                                                    repo_path: self.repo_path.clone(), 
+                                                    rel_path: p.clone() 
+                                                }, format!("Stage: {}", p));
+                                                self.stage_file(&p);
+                                            }
+                                            ui.add_space(6.0);
+                                            let mode_text = if self.is_unified_view { "Unified View" } else { "Side-by-Side View" };
+                                            if ui.selectable_label(self.is_unified_view, mode_text).clicked() {
+                                                self.is_unified_view = !self.is_unified_view;
+                                            }
                                         });
                                     });
                                 });
+
+                            let lnum_w: f32 = 40.0;
+                            let gutter_w: f32 = 32.0;
+                            let code_w = ((diff_w - gutter_w - lnum_w * 2.0 - 24.0) / 2.0).max(280.0);
+                            let total_w = lnum_w * 2.0 + code_w * 2.0 + gutter_w;
+                            let row_h = 18.0_f32;
+                            let mut hunk_to_apply: Option<usize> = None;
+
+                            // IntelliJ Diff High Contrast Colors & Colors for Gutter
+                            let added_bg    = if is_dark { dark(24, 60, 36) }  else { dark(200, 245, 215) };  // #183c24
+                            let deleted_bg  = if is_dark { dark(64, 28, 28) }  else { dark(255, 215, 215) };  // #401c1c
+                            let modified_bg = if is_dark { dark(26, 52, 85) }  else { dark(215, 230, 255) };  // #1a3455
+                            let gutter_bg   = if is_dark { dark(33, 34, 38) }  else { dark(240, 240, 245) };  // #212226
+
+                            let added_txt    = if is_dark { dark(175, 235, 185) } else { dark(20, 80, 40) };
+                            let deleted_txt  = if is_dark { dark(240, 160, 160) } else { dark(140, 30, 30) };
+                            let modified_txt = if is_dark { dark(175, 205, 255) } else { dark(20, 60, 140) };
+                            let normal_txt   = if is_dark { dark(188, 190, 196) } else { dark(30, 30, 30) };
+
+                            if self.is_unified_view {
+                                // Unified View Header
+                                egui::Frame::default()
+                                    .fill(hdr_bg)
+                                    .inner_margin(egui::Margin::symmetric(4.0, 3.0))
+                                    .stroke(egui::Stroke::new(1.0, border_c))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 0.0;
+                                            ui.allocate_ui(egui::vec2(lnum_w * 2.0 + 8.0, 16.0), |ui| {
+                                                ui.label(egui::RichText::new("Line #").weak().size(11.0));
+                                            });
+                                            ui.label(egui::RichText::new("Unified Changes").strong().size(11.0));
+                                        });
+                                    });
+
+                                // Unified View ScrollArea
+                                egui::ScrollArea::both()
+                                    .id_salt("git_diff_unified_scroll")
+                                    .auto_shrink([false, false])
+                                    .show_rows(ui, row_h, self.diff_rows.len(), |ui, row_range| {
+                                        for r_idx in row_range {
+                                            let row = &self.diff_rows[r_idx];
+                                            let (bg, txt_color, prefix, text) = match row.kind {
+                                                DiffKind::Added    => (added_bg,    added_txt,    "+ ", &row.right_text),
+                                                DiffKind::Deleted  => (deleted_bg,  deleted_txt,  "- ", &row.left_text),
+                                                DiffKind::Modified => (modified_bg, modified_txt, "~ ", if !row.right_text.is_empty() { &row.right_text } else { &row.left_text }),
+                                                DiffKind::Conflict => (dark(80, 60, 20), dark(255, 200, 100), "! ", &row.right_text),
+                                                DiffKind::Equal    => (egui::Color32::TRANSPARENT, normal_txt, "  ", &row.left_text),
+                                            };
+
+                                            ui.push_id(r_idx, |ui| {
+                                                egui::Frame::default().fill(bg).show(ui, |ui| {
+                                                    ui.set_height(row_h);
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 0.0;
+                                                        let ln_l = row.left_line_num.map(|n| format!("{:>4} ", n)).unwrap_or_else(|| "     ".into());
+                                                        let ln_r = row.right_line_num.map(|n| format!("{:>4} ", n)).unwrap_or_else(|| "     ".into());
+
+                                                        ui.allocate_ui(egui::vec2(lnum_w, row_h), |ui| {
+                                                            ui.label(egui::RichText::new(&ln_l).size(11.0).color(dark(90, 93, 99)).family(egui::FontFamily::Monospace));
+                                                        });
+                                                        ui.allocate_ui(egui::vec2(lnum_w, row_h), |ui| {
+                                                            ui.label(egui::RichText::new(&ln_r).size(11.0).color(dark(90, 93, 99)).family(egui::FontFamily::Monospace));
+                                                        });
+                                                        ui.add_space(8.0);
+                                                        let full_str = format!("{}{}", prefix, text);
+                                                        ui.add(egui::Label::new(
+                                                            egui::RichText::new(&full_str).size(11.5).color(txt_color).family(egui::FontFamily::Monospace)
+                                                        ).truncate());
+                                                    });
+                                                });
+                                            });
+                                        }
+                                    });
+                            } else {
+                                // Side-by-Side Column Header (With Center Separator Column)
+                                egui::Frame::default()
+                                    .fill(hdr_bg)
+                                    .inner_margin(egui::Margin::symmetric(0.0, 3.0))
+                                    .stroke(egui::Stroke::new(1.0, border_c))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 0.0;
+                                            ui.allocate_ui(egui::vec2(lnum_w + code_w, 16.0), |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.add_space(8.0);
+                                                    ui.label(egui::RichText::new("HEAD (Original version)").strong().size(11.0));
+                                                });
+                                            });
+                                            // Center gutter header
+                                            let (gutter_rect, _) = ui.allocate_exact_size(egui::vec2(gutter_w, 16.0), egui::Sense::hover());
+                                            ui.painter().rect_filled(gutter_rect, 0.0, gutter_bg);
+                                            ui.painter().line_segment(
+                                                [gutter_rect.left_top(), gutter_rect.left_bottom()],
+                                                egui::Stroke::new(1.0, border_c),
+                                            );
+                                            ui.painter().line_segment(
+                                                [gutter_rect.right_top(), gutter_rect.right_bottom()],
+                                                egui::Stroke::new(1.0, border_c),
+                                            );
+                                            ui.allocate_ui(egui::vec2(lnum_w + code_w, 16.0), |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.add_space(8.0);
+                                                    ui.label(egui::RichText::new("Working Copy (Current version)").strong().size(11.0));
+                                                });
+                                            });
+                                        });
+                                    });
+
+                                // Side-by-Side ScrollArea
+                                egui::ScrollArea::both()
+                                    .id_salt("git_diff_side_by_side_scroll")
+                                    .auto_shrink([false, false])
+                                    .show_rows(ui, row_h, self.diff_rows.len(), |ui, row_range| {
+                                        ui.set_min_width(total_w);
+
+                                        let left_panel_w = lnum_w + code_w;
+                                        let right_panel_w = lnum_w + code_w;
+                                        let padding_bg = if is_dark { dark(40, 40, 44) } else { dark(235, 235, 240) };
+
+                                        for r_idx in row_range {
+                                            let row = &self.diff_rows[r_idx];
+
+                                            // Determine per-panel colors
+                                            let (left_bg, right_bg, left_txt, right_txt) = match row.kind {
+                                                DiffKind::Added    => (padding_bg,   added_bg,    dark(90, 93, 99), added_txt),
+                                                DiffKind::Deleted  => (deleted_bg,   padding_bg,  deleted_txt,      dark(90, 93, 99)),
+                                                DiffKind::Modified => (modified_bg,  modified_bg, modified_txt,     modified_txt),
+                                                DiffKind::Conflict => (dark(80,60,20), dark(80,60,20), dark(255,200,100), dark(255,200,100)),
+                                                DiffKind::Equal    => (egui::Color32::TRANSPARENT, egui::Color32::TRANSPARENT, normal_txt, normal_txt),
+                                            };
+
+                                            ui.push_id(r_idx, |ui| {
+                                                // Allocate the full row as one horizontal strip
+                                                let (row_rect, _) = ui.allocate_exact_size(
+                                                    egui::vec2(total_w, row_h),
+                                                    egui::Sense::hover(),
+                                                );
+
+                                                let painter = ui.painter_at(row_rect);
+
+                                                // --- Paint backgrounds ---
+                                                // Left panel bg
+                                                let left_rect = egui::Rect::from_min_size(
+                                                    row_rect.min,
+                                                    egui::vec2(left_panel_w, row_h),
+                                                );
+                                                if left_bg != egui::Color32::TRANSPARENT {
+                                                    painter.rect_filled(left_rect, 0.0, left_bg);
+                                                }
+
+                                                // Center gutter bg
+                                                let gutter_rect = egui::Rect::from_min_size(
+                                                    egui::pos2(row_rect.min.x + left_panel_w, row_rect.min.y),
+                                                    egui::vec2(gutter_w, row_h),
+                                                );
+                                                painter.rect_filled(gutter_rect, 0.0, gutter_bg);
+                                                // Gutter vertical border lines
+                                                painter.line_segment(
+                                                    [gutter_rect.left_top(), gutter_rect.left_bottom()],
+                                                    egui::Stroke::new(1.0, border_c),
+                                                );
+                                                painter.line_segment(
+                                                    [gutter_rect.right_top(), gutter_rect.right_bottom()],
+                                                    egui::Stroke::new(1.0, border_c),
+                                                );
+
+                                                // Right panel bg
+                                                let right_rect = egui::Rect::from_min_size(
+                                                    egui::pos2(row_rect.min.x + left_panel_w + gutter_w, row_rect.min.y),
+                                                    egui::vec2(right_panel_w, row_h),
+                                                );
+                                                if right_bg != egui::Color32::TRANSPARENT {
+                                                    painter.rect_filled(right_rect, 0.0, right_bg);
+                                                }
+
+                                                // --- Paint text using painter (pixel-exact positioning) ---
+                                                let font = egui::FontId::monospace(11.0);
+                                                let code_font = egui::FontId::monospace(11.5);
+                                                let lnum_color = dark(90, 93, 99);
+                                                let text_y = row_rect.min.y + (row_h - 11.5) / 2.0;
+
+                                                // 1. Left line number
+                                                let ln_l = row.left_line_num
+                                                    .map(|n| format!("{:>4} ", n))
+                                                    .unwrap_or_else(|| "     ".into());
+                                                painter.text(
+                                                    egui::pos2(left_rect.min.x + 2.0, text_y),
+                                                    egui::Align2::LEFT_TOP,
+                                                    &ln_l,
+                                                    font.clone(),
+                                                    lnum_color,
+                                                );
+
+                                                // 2. Left code text (clipped)
+                                                let left_code_rect = egui::Rect::from_min_size(
+                                                    egui::pos2(left_rect.min.x + lnum_w, row_rect.min.y),
+                                                    egui::vec2(code_w, row_h),
+                                                );
+                                                let left_code_painter = painter.with_clip_rect(left_code_rect);
+                                                left_code_painter.text(
+                                                    egui::pos2(left_code_rect.min.x + 4.0, text_y),
+                                                    egui::Align2::LEFT_TOP,
+                                                    &row.left_text,
+                                                    code_font.clone(),
+                                                    left_txt,
+                                                );
+
+                                                // 3. Center gutter - apply button (only at hunk start)
+                                                if let Some(h_idx) = row.hunk_idx {
+                                                    let is_start = self.diff_hunks.iter()
+                                                        .any(|h| h.hunk_idx == h_idx && h.start_row == r_idx);
+                                                    if is_start {
+                                                        let btn_rect = egui::Rect::from_center_size(
+                                                            gutter_rect.center(),
+                                                            egui::vec2(gutter_w - 4.0, row_h - 2.0),
+                                                        );
+                                                        let btn_response = ui.interact(btn_rect, ui.id().with(("gutter_btn", r_idx)), egui::Sense::click());
+                                                        if btn_response.hovered() {
+                                                            painter.rect_filled(btn_rect, 2.0, dark(60, 63, 70));
+                                                        }
+                                                        painter.text(
+                                                            gutter_rect.center(),
+                                                            egui::Align2::CENTER_CENTER,
+                                                            ">>",
+                                                            egui::FontId::proportional(10.0),
+                                                            dark(53, 116, 240),
+                                                        );
+                                                        if btn_response.clicked() {
+                                                            hunk_to_apply = Some(h_idx);
+                                                        }
+                                                    }
+                                                }
+
+                                                // 4. Right line number
+                                                let ln_r = row.right_line_num
+                                                    .map(|n| format!("{:>4} ", n))
+                                                    .unwrap_or_else(|| "     ".into());
+                                                painter.text(
+                                                    egui::pos2(right_rect.min.x + 2.0, text_y),
+                                                    egui::Align2::LEFT_TOP,
+                                                    &ln_r,
+                                                    font.clone(),
+                                                    lnum_color,
+                                                );
+
+                                                // 5. Right code text (clipped)
+                                                let right_code_rect = egui::Rect::from_min_size(
+                                                    egui::pos2(right_rect.min.x + lnum_w, row_rect.min.y),
+                                                    egui::vec2(code_w, row_h),
+                                                );
+                                                let right_code_painter = painter.with_clip_rect(right_code_rect);
+                                                right_code_painter.text(
+                                                    egui::pos2(right_code_rect.min.x + 4.0, text_y),
+                                                    egui::Align2::LEFT_TOP,
+                                                    &row.right_text,
+                                                    code_font.clone(),
+                                                    right_txt,
+                                                );
+                                            });
+                                        }
+                                    });
+                            }
+
+                            if let Some(h_idx) = hunk_to_apply {
+                                if let Some(sel) = &self.selected_file_path {
+                                    let full_path = std::path::Path::new(&self.repo_path).join(sel);
+                                    let saved = std::fs::read(&full_path).unwrap_or_default();
+                                    undo.push(crate::ui::undo_manager::UndoAction::GitRevertHunk { 
+                                        repo_path: self.repo_path.clone(), 
+                                        rel_path: sel.clone(),
+                                        saved_content: saved,
+                                    }, format!("Revert hunk in: {}", sel));
+                                }
+                                self.revert_hunk(h_idx);
                             }
                         });
-
-                        if let Some(h_idx) = hunk_to_revert {
-                            self.revert_hunk(h_idx);
-                        }
                     });
-                });
             });
+        });
 
         None
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
 }
 
-// Extra phosphor icon helpers
 impl Icons {
     pub const CARET_DOWN_KEY: &'static str = "\u{e136}";
     pub const CARET_UP_KEY: &'static str = "\u{e140}";
@@ -1126,4 +1413,64 @@ mod tests {
         assert_eq!(rows[1].kind, DiffKind::Modified);
         assert_eq!(rows[3].kind, DiffKind::Added);
     }
+
+    #[test]
+    fn test_compute_side_by_side_diff_empty_files() {
+        let left = "";
+        let right = "new line 1\nnew line 2";
+        let (rows, hunks) = compute_side_by_side_diff(left, right);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(rows[0].kind, DiffKind::Added);
+        assert_eq!(rows[1].kind, DiffKind::Added);
+    }
+
+    #[test]
+    fn test_compute_side_by_side_diff_deleted_file() {
+        let left = "old line 1\nold line 2";
+        let right = "";
+        let (rows, hunks) = compute_side_by_side_diff(left, right);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(rows[0].kind, DiffKind::Deleted);
+        assert_eq!(rows[1].kind, DiffKind::Deleted);
+    }
+
+    #[test]
+    fn test_padding_rows_alignment() {
+        let left = "line 1\nold 1\nold 2\nline 4";
+        let right = "line 1\nnew 1\nnew 2\nnew 3\nline 4";
+        let (rows, hunks) = compute_side_by_side_diff(left, right);
+
+        assert_eq!(hunks.len(), 1);
+        // Deleted lines on left have None for right_line_num
+        let deleted_rows: Vec<&DiffRow> = rows.iter().filter(|r| r.kind == DiffKind::Deleted).collect();
+        assert_eq!(deleted_rows.len(), 2);
+        for d in &deleted_rows {
+            assert!(d.left_line_num.is_some());
+            assert!(d.right_line_num.is_none());
+        }
+
+        // Added lines on right have None for left_line_num
+        let added_rows: Vec<&DiffRow> = rows.iter().filter(|r| r.kind == DiffKind::Added).collect();
+        assert_eq!(added_rows.len(), 3);
+        for a in &added_rows {
+            assert!(a.left_line_num.is_none());
+            assert!(a.right_line_num.is_some());
+        }
+
+        // Equal lines at start and end match line numbers
+        assert_eq!(rows[0].kind, DiffKind::Equal);
+        assert_eq!(rows[0].left_line_num, Some(1));
+        assert_eq!(rows[0].right_line_num, Some(1));
+
+        let last = rows.last().unwrap();
+        assert_eq!(last.kind, DiffKind::Equal);
+        assert_eq!(last.left_line_num, Some(4));
+        assert_eq!(last.right_line_num, Some(5));
+    }
 }
+
+

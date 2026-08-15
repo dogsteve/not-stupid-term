@@ -9,6 +9,7 @@ use super::settings::SettingsApp;
 use super::sftp_app::SftpApp;
 use super::ssh_manager::SshManagerApp;
 use super::terminal_app::TerminalApp;
+use super::undo_manager::UndoManager;
 use super::window_framework::{FloatingWindow, WindowAction};
 
 pub struct Workspace {
@@ -155,7 +156,7 @@ impl Workspace {
         }
     }
 
-    pub fn render(&mut self, ctx: &egui::Context, config: &mut crate::ui::settings::AppConfig) {
+    pub fn render(&mut self, ctx: &egui::Context, config: &mut crate::ui::settings::AppConfig, undo: &mut UndoManager) {
         let is_dark = ctx.style().visuals.dark_mode;
 
         // Fluent workspace background with subtle noise-like texture via layered fills
@@ -241,7 +242,7 @@ impl Workspace {
 
         // Render floating windows
         for window in self.windows.iter_mut() {
-            if let Some(act) = window.render(ctx, config) {
+            if let Some(act) = window.render(ctx, config, undo) {
                 actions.push(act);
             }
         }

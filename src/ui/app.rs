@@ -8,12 +8,14 @@ use crate::ui::session;
 use crate::ui::settings::{AppConfig, SettingsApp};
 use crate::ui::theme;
 use crate::ui::terminal_app::TerminalApp;
+use crate::ui::undo_manager::UndoManager;
 use crate::ui::window_framework::FloatingWindow;
 use crate::ui::workspace::Workspace;
 
 pub struct XTermApp {
     _state: AppState,
     workspaces: Vec<Workspace>,
+    undo_manager: UndoManager,
     active_workspace_idx: usize,
     config: AppConfig,
     _last_theme_sync: f64,
@@ -47,10 +49,12 @@ impl XTermApp {
 
         let theme_key = (config.theme.clone(), config.blur_level, config.window_rounding);
         let font_key = (ui_font.clone(), mono_font.clone(), config.ui_font_size, config.mono_font_size);
+        let undo_stack_size = config.undo_stack_size;
 
         Self {
             _state: AppState::default(),
             workspaces,
+            undo_manager: UndoManager::new(undo_stack_size),
             active_workspace_idx: active_idx,
             config,
             _last_theme_sync: 0.0,
@@ -89,6 +93,75 @@ impl XTermApp {
             } else {
                 let win_id = uuid::Uuid::new_v4().to_string();
                 ws.windows.push(FloatingWindow::new(win_id, Box::new(crate::ui::git_app::GitApp::new())));
+            }
+        }
+    }
+
+    fn apply_undo_action(&mut self, action: &crate::ui::undo_manager::UndoAction) {
+        use crate::ui::undo_manager::UndoAction;
+        match action {
+            UndoAction::EditorSave { file_path, previous_content } => {
+                for ws in &mut self.workspaces {
+                    for win in &mut ws.windows {
+                        if win.app.window_type() == "editor" {
+                            if let Some(editor) = win.app.as_any_mut().and_then(|a| a.downcast_mut::<EditorApp>()) {
+                                if editor.path == *file_path {
+                                    editor.content = previous_content.clone();
+                                    editor.original_content = previous_content.clone();
+                                    editor.is_dirty = false;
+                                    editor.save_status = Some("Undid save".to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            UndoAction::EditorFormat { window_id, previous_content }
+            | UndoAction::EditorReplace { window_id, previous_content }
+            | UndoAction::EditorReplaceAll { window_id, previous_content } => {
+                for ws in &mut self.workspaces {
+                    for win in &mut ws.windows {
+                        if win.app.window_type() == "editor" {
+                            if let Some(editor) = win.app.as_any_mut().and_then(|a| a.downcast_mut::<EditorApp>()) {
+                                if editor.path == *window_id {
+                                    editor.content = previous_content.clone();
+                                    editor.is_dirty = editor.content != editor.original_content;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            UndoAction::SettingsChange { previous_config } => {
+                self.config = *previous_config.clone();
+            }
+            UndoAction::WorkspaceRename { ws_index, previous_name } => {
+                if let Some(ws) = self.workspaces.get_mut(*ws_index) {
+                    ws.name = previous_name.clone();
+                }
+            }
+            UndoAction::GitStageFile { .. }
+            | UndoAction::GitUnstageFile { .. }
+            | UndoAction::GitStageAll { .. }
+            | UndoAction::GitUnstageAll { .. }
+            | UndoAction::GitRevertFile { .. }
+            | UndoAction::GitDeleteFile { .. }
+            | UndoAction::GitRevertHunk { .. }
+            | UndoAction::GitCommit { .. }
+            | UndoAction::GitSwitchBranch { .. }
+            | UndoAction::GitCreateBranch { .. } => {
+                // Refresh all open GitApp windows after undo
+                for ws in &mut self.workspaces {
+                    for win in &mut ws.windows {
+                        if win.app.window_type() == "git_manager" {
+                            if let Some(git_app) = win.app.as_any_mut()
+                                .and_then(|a| a.downcast_mut::<crate::ui::git_app::GitApp>())
+                            {
+                                git_app.needs_refresh = true;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -679,7 +752,25 @@ impl eframe::App for XTermApp {
         if ctx.input(|i| !i.raw.events.is_empty()) {
             let shortcuts = &self.config.shortcuts;
 
-            if match_shortcut(ctx, &shortcuts.new_terminal) {
+            if match_shortcut(ctx, "Cmd+Shift+Z") || match_shortcut(ctx, "Ctrl+Shift+Z") {
+                if self.undo_manager.can_redo() {
+                    if let Some(entry) = self.undo_manager.redo() {
+                        if let Some((rev_action, desc)) = crate::ui::undo_manager::execute_undo_action(&entry.action) {
+                            self.undo_manager.show_toast(format!("Redo: {}", desc));
+                            self.apply_undo_action(&rev_action);
+                        }
+                    }
+                }
+            } else if match_shortcut(ctx, "Cmd+Z") || match_shortcut(ctx, "Ctrl+Z") {
+                if self.undo_manager.can_undo() {
+                    if let Some(entry) = self.undo_manager.undo() {
+                        if let Some((rev_action, desc)) = crate::ui::undo_manager::execute_undo_action(&entry.action) {
+                            self.undo_manager.show_toast(format!("Undo: {}", desc));
+                            self.apply_undo_action(&rev_action);
+                        }
+                    }
+                }
+            } else if match_shortcut(ctx, &shortcuts.new_terminal) {
                 let win_id = uuid::Uuid::new_v4().to_string();
                 if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
                     let count = ws.windows.len();
@@ -783,7 +874,7 @@ impl eframe::App for XTermApp {
         self.render_top_bar(ctx);
 
         if let Some(workspace) = self.workspaces.get_mut(self.active_workspace_idx) {
-            workspace.render(ctx, &mut self.config);
+            workspace.render(ctx, &mut self.config, &mut self.undo_manager);
         }
 
         // Render command palette
@@ -830,6 +921,32 @@ impl eframe::App for XTermApp {
             }
         }
 
+        // ── Undo/Redo Toast Notification ─────────────────────────────────────
+        if self.undo_manager.take_expired_toast(2.5) {
+            if let Some((msg, _)) = &self.undo_manager.toast {
+                let toast_msg = msg.clone();
+                egui::Area::new(egui::Id::new("undo_toast"))
+                    .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -40.0])
+                    .interactable(false)
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::default()
+                            .fill(egui::Color32::from_rgba_unmultiplied(30, 30, 30, 230))
+                            .rounding(8.0)
+                            .inner_margin(egui::Margin::symmetric(16.0, 10.0))
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(&toast_msg)
+                                        .color(egui::Color32::from_gray(220))
+                                        .size(13.0),
+                                );
+                            });
+                    });
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        }
+
         // Auto-save session state periodically (every 5 seconds) instead of every frame
         if self.last_saved_time.elapsed() >= std::time::Duration::from_secs(5) {
             session::save_session(&self.workspaces, self.active_workspace_idx, &self.config);
@@ -873,6 +990,7 @@ fn match_shortcut(ctx: &egui::Context, shortcut: &str) -> bool {
             "P" | "p" => egui::Key::P,
             "F" | "f" => egui::Key::F,
             "G" | "g" => egui::Key::G,
+            "Z" | "z" => egui::Key::Z,
             "Tab" => egui::Key::Tab,
             "Right" => egui::Key::ArrowRight,
             "Left" => egui::Key::ArrowLeft,

@@ -611,6 +611,7 @@ impl WindowApp for TerminalApp {
         ui: &mut egui::Ui,
         _ctx: &egui::Context,
         config: &mut crate::ui::settings::AppConfig,
+        _undo: &mut crate::ui::undo_manager::UndoManager,
     ) -> Option<WindowAction> {
         // Prevent content from pushing the window horizontally to avoid infinite resize loops
         let initial_avail_x = ui.available_width();
