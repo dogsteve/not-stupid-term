@@ -55,12 +55,17 @@ impl Icons {
     pub const SUN: &'static str = "\u{e472}";
     pub const MOON: &'static str = "\u{e330}";
     pub const APP_WINDOW: &'static str = "\u{e5da}";
-    pub const SQUARE: &'static str = "\u{e456}";
+    pub const SQUARE: &'static str = "\u{e45e}";
     pub const BROWSERS: &'static str = "\u{e0f6}";
     pub const TABS: &'static str = "\u{e778}";
+    pub const CARET_DOWN: &'static str = "\u{e136}";
     pub const CARET_LEFT: &'static str = "\u{e138}";
     pub const CARET_RIGHT: &'static str = "\u{e13a}";
     pub const CARET_UP: &'static str = "\u{e13c}";
+    pub const ARROW_DOWN: &'static str = "\u{e03e}";
+    pub const ARROW_UP: &'static str = "\u{e08e}";
+    pub const DOWNLOAD: &'static str = "\u{e20a}";
+    pub const UPLOAD: &'static str = "\u{e4be}";
     pub const NOTE: &'static str = "\u{e348}";
     pub const IMAGE: &'static str = "\u{e2ca}";
 
@@ -98,61 +103,31 @@ impl Icons {
             "md" | "markdown" => "\u{ed50}",                           // file-md
             "toml" | "yaml" | "yml" | "ini" | "cfg" | "env" => "\u{e272}", // gear-six
             "sh" | "zsh" | "bash" => "\u{eae8}",                      // terminal-window
-            "c" | "cpp" | "h" | "hpp" | "cc" => "\u{e1bc}",           // code
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "ico" => "\u{ea24}", // file-image
+            "mp4" | "mkv" | "avi" | "mov" | "webm" => "\u{ea24}",      // file-video
+            "mp3" | "wav" | "flac" | "ogg" => "\u{ea24}",              // file-audio
+            "zip" | "tar" | "gz" | "7z" | "rar" => "\u{e958}",         // file-zip
+            "lock" => "\u{e40a}",                                      // shield/lock
+            "c" | "cpp" | "h" | "hpp" => "\u{e914}",                   // file-code
             "go" => "\u{e914}",                                        // file-code
-            "java" | "jar" => "\u{e914}",                              // file-code
-            "kt" | "kts" => "\u{e914}",                                // file-code
-            "swift" => "\u{e914}",                                     // file-code
+            "java" | "kt" => "\u{e914}",                               // file-code
             "php" => "\u{e914}",                                       // file-code
-            "rb" => "\u{e1ec}",                                        // diamond
-            "lua" => "\u{e330}",                                       // moon
             "sql" => "\u{e1de}",                                       // database
-            "svg" => "\u{ed08}",                                       // file-svg
-            "zip" | "tar" | "gz" | "7z" | "rar" | "xz" => "\u{e958}", // file-zip
-            "png" => "\u{eb18}",                                       // file-png
-            "jpg" | "jpeg" => "\u{eb1a}",                              // file-jpg
-            "gif" | "webp" => "\u{ea24}",                              // file-image
-            "pdf" => "\u{e702}",                                       // file-pdf
-            "doc" | "docx" => "\u{eb1e}",                              // file-doc
-            "mp4" | "mkv" | "avi" | "mov" => "\u{ea22}",              // file-video
-            "mp3" | "wav" | "flac" | "ogg" => "\u{ea20}",             // file-audio
-            _ => "\u{e230}",                                           // file (generic)
+            _ => "\u{e23a}",                                           // file-text
         }
     }
 
-    /// Returns a [`egui::RichText`] that renders `glyph` using the dedicated
     /// Creates a RichText for a single icon.
-    /// Note: we use FontFamily::Name("phosphor") to avoid collisions with
-    /// which UI font is currently active.
-    pub fn rich(glyph: &'static str, size: f32) -> egui::RichText {
+    /// Uses dedicated FontFamily::Name("phosphor") to avoid collisions with UI fonts.
+    pub fn rich(glyph: &str, size: f32) -> egui::RichText {
         egui::RichText::new(glyph)
             .family(egui::FontFamily::Name("phosphor".into()))
             .size(size)
     }
 
-    /// Creates a LayoutJob for an icon followed by text.
-    /// Prevents the icon from being overridden by normal text fonts that have PUA glyphs.
-    pub fn job(glyph: &'static str, text: &str, size: f32) -> egui::text::LayoutJob {
-        let mut job = egui::text::LayoutJob::default();
-        job.append(
-            glyph,
-            0.0,
-            egui::TextFormat {
-                font_id: egui::FontId::new(size, egui::FontFamily::Name("phosphor".into())),
-                color: egui::Color32::PLACEHOLDER,
-                ..Default::default()
-            },
-        );
-        job.append(
-            &format!(" {}", text),
-            0.0,
-            egui::TextFormat {
-                font_id: egui::FontId::new(size, egui::FontFamily::Proportional),
-                color: egui::Color32::PLACEHOLDER,
-                ..Default::default()
-            },
-        );
-        job
+    /// Creates a LayoutJob for an icon followed by text with placeholder color.
+    pub fn job(glyph: &str, text: &str, size: f32) -> egui::text::LayoutJob {
+        Self::label_job(glyph, text, size, egui::Color32::PLACEHOLDER)
     }
 
     /// Builds a LayoutJob for an icon string + label string with proper Phosphor font family
@@ -167,24 +142,26 @@ impl Icons {
                 ..Default::default()
             },
         );
-        job.append(
-            " ",
-            0.0,
-            egui::TextFormat {
-                font_id: egui::FontId::proportional(size),
-                color,
-                ..Default::default()
-            },
-        );
-        job.append(
-            text,
-            0.0,
-            egui::TextFormat {
-                font_id: egui::FontId::proportional(size),
-                color,
-                ..Default::default()
-            },
-        );
+        if !text.is_empty() {
+            job.append(
+                " ",
+                0.0,
+                egui::TextFormat {
+                    font_id: egui::FontId::proportional(size),
+                    color,
+                    ..Default::default()
+                },
+            );
+            job.append(
+                text,
+                0.0,
+                egui::TextFormat {
+                    font_id: egui::FontId::proportional(size),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
         job
     }
 }

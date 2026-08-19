@@ -179,23 +179,13 @@ pub fn apply_theme(ctx: &egui::Context, config: &crate::ui::settings::AppConfig)
     style.spacing.item_spacing = egui::vec2(8.0, 4.0);
     style.spacing.menu_margin = egui::Margin::same(6.0);
 
-    for (text_style, font_id) in style.text_styles.iter_mut() {
-        match text_style {
-            egui::TextStyle::Body | egui::TextStyle::Button => {
-                font_id.size = config.ui_font_size;
-            }
-            egui::TextStyle::Heading => {
-                font_id.size = config.ui_font_size + 5.0;
-            }
-            egui::TextStyle::Small => {
-                font_id.size = (config.ui_font_size - 2.0).max(9.0);
-            }
-            egui::TextStyle::Monospace => {
-                font_id.size = config.mono_font_size;
-            }
-            _ => {}
-        }
-    }
+    style.text_styles = [
+        (egui::TextStyle::Small, egui::FontId::proportional((config.ui_font_size - 2.0).max(9.0))),
+        (egui::TextStyle::Body, egui::FontId::proportional(config.ui_font_size)),
+        (egui::TextStyle::Button, egui::FontId::proportional(config.ui_font_size)),
+        (egui::TextStyle::Heading, egui::FontId::proportional(config.ui_font_size + 5.0)),
+        (egui::TextStyle::Monospace, egui::FontId::monospace(config.mono_font_size)),
+    ].into();
 
     ctx.set_style(style);
     ctx.set_visuals(visuals);
@@ -258,6 +248,126 @@ pub fn apply_font(ctx: &egui::Context, ui_font_family: &str, mono_font_family: &
                 .entry(egui::FontFamily::Monospace)
                 .or_default()
                 .insert(0, "JetBrainsMono".to_owned());
+        }
+        "SF Mono" => {
+            let candidates = [
+                "/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts/SFMono-Regular.otf",
+                "/Library/Fonts/SF-Mono-Regular.otf",
+                "/System/Library/Fonts/SFMono-Regular.otf",
+            ];
+            let mut loaded = false;
+            for path in candidates {
+                if let Ok(data) = std::fs::read(path) {
+                    fonts.font_data.insert("SFMono".to_owned(), egui::FontData::from_owned(data));
+                    fonts.families
+                        .entry(egui::FontFamily::Monospace)
+                        .or_default()
+                        .insert(0, "SFMono".to_owned());
+                    loaded = true;
+                    break;
+                }
+            }
+            if !loaded {
+                fonts.font_data.insert(
+                    "FiraCode".to_owned(),
+                    egui::FontData::from_static(include_bytes!("../../assets/FiraCode-Regular.ttf")),
+                );
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "FiraCode".to_owned());
+            }
+        }
+        "Monaco" => {
+            let loaded = if let Ok(data) = std::fs::read("/System/Library/Fonts/Monaco.ttf") {
+                fonts.font_data.insert("Monaco".to_owned(), egui::FontData::from_owned(data));
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "Monaco".to_owned());
+                true
+            } else {
+                false
+            };
+            if !loaded {
+                fonts.font_data.insert(
+                    "FiraCode".to_owned(),
+                    egui::FontData::from_static(include_bytes!("../../assets/FiraCode-Regular.ttf")),
+                );
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "FiraCode".to_owned());
+            }
+        }
+        "Menlo" => {
+            let loaded = if let Ok(data) = std::fs::read("/System/Library/Fonts/Menlo.ttc") {
+                fonts.font_data.insert("Menlo".to_owned(), egui::FontData::from_owned(data));
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "Menlo".to_owned());
+                true
+            } else {
+                false
+            };
+            if !loaded {
+                fonts.font_data.insert(
+                    "FiraCode".to_owned(),
+                    egui::FontData::from_static(include_bytes!("../../assets/FiraCode-Regular.ttf")),
+                );
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "FiraCode".to_owned());
+            }
+        }
+        "Consolas" => {
+            let loaded = if let Ok(data) = std::fs::read(r"C:\Windows\Fonts\consola.ttf") {
+                fonts.font_data.insert("Consolas".to_owned(), egui::FontData::from_owned(data));
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "Consolas".to_owned());
+                true
+            } else {
+                false
+            };
+            if !loaded {
+                fonts.font_data.insert(
+                    "FiraCode".to_owned(),
+                    egui::FontData::from_static(include_bytes!("../../assets/FiraCode-Regular.ttf")),
+                );
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "FiraCode".to_owned());
+            }
+        }
+        "Cascadia Code" => {
+            let loaded = if let Ok(data) = std::fs::read(r"C:\Windows\Fonts\CascadiaCode.ttf") {
+                fonts.font_data.insert("CascadiaCode".to_owned(), egui::FontData::from_owned(data));
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "CascadiaCode".to_owned());
+                true
+            } else {
+                false
+            };
+            if !loaded {
+                fonts.font_data.insert(
+                    "FiraCode".to_owned(),
+                    egui::FontData::from_static(include_bytes!("../../assets/FiraCode-Regular.ttf")),
+                );
+                fonts.families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "FiraCode".to_owned());
+            }
+        }
+        "System Default" | "System Monospace" => {
+            // Egui built-in monospace
         }
         _ => {
             // Default: Fira Code

@@ -1239,18 +1239,17 @@ impl WindowApp for TerminalApp {
                                     let row_resp = row.show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.label(
-                                                egui::RichText::new(icon)
-                                                    .size(12.0)
+                                                Icons::rich(icon, (config.ui_font_size - 1.0).max(10.0))
                                                     .color(tag_color)
                                             );
                                             ui.label(
                                                 egui::RichText::new(&item.display)
-                                                    .font(egui::FontId::monospace(12.5))
+                                                    .font(egui::FontId::monospace(config.mono_font_size))
                                             );
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 ui.label(
                                                     egui::RichText::new(&item.detail)
-                                                        .size(10.0)
+                                                        .size((config.ui_font_size - 3.0).max(9.0))
                                                         .color(tag_color)
                                                 );
                                             });

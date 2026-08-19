@@ -122,8 +122,14 @@ pub struct FloatingWindow {
 
 impl FloatingWindow {
     pub fn new(id: impl Into<String>, app: Box<dyn WindowApp>) -> Self {
+        let def_s = app.default_size();
+        let id_str = id.into();
+        let id_hash = id_str.bytes().fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+        let cascade_offset = ((id_hash % 8) as f32) * 26.0;
+        let default_pos = egui::pos2(60.0 + cascade_offset, 50.0 + cascade_offset);
+
         Self {
-            id: id.into(),
+            id: id_str,
             is_open: true,
             app,
             custom_title: None,
@@ -131,9 +137,9 @@ impl FloatingWindow {
             temp_title: String::new(),
             focus_requested: true,
             is_maximized: false,
-            restore_pos: None,
-            restore_size: None,
-            set_pos_size: None,
+            restore_pos: Some(default_pos),
+            restore_size: Some(egui::vec2(def_s[0], def_s[1])),
+            set_pos_size: Some((default_pos, egui::vec2(def_s[0], def_s[1]))),
             pending_snap_target: None,
             last_known_rect: None,
             open_anim: 0.0,
@@ -254,7 +260,6 @@ impl FloatingWindow {
         }
 
         if self.focus_requested {
-            ctx.memory_mut(|m| m.request_focus(egui::Id::new(&self.id)));
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&self.id)));
             self.app.on_focus(ctx);
             self.focus_requested = false;
@@ -304,6 +309,9 @@ impl FloatingWindow {
                         se: 0.0,
                     });
 
+                let title_font_size = (config.ui_font_size - 1.0).max(10.0);
+                let btn_icon_size = (config.ui_font_size - 2.0).max(10.0);
+
                 let title_bar_resp = title_frame.show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if self.is_editing_title {
@@ -312,10 +320,10 @@ impl FloatingWindow {
                                 egui::TextEdit::singleline(&mut self.temp_title)
                                     .id(edit_id)
                                     .desired_width(180.0)
-                                    .font(egui::FontId::proportional(12.0)),
+                                    .font(egui::FontId::proportional(title_font_size)),
                             );
-                            if !ui.memory(|m| m.has_focus(edit_id)) {
-                                ui.memory_mut(|m| m.request_focus(edit_id));
+                            if !response.has_focus() {
+                                response.request_focus();
                             }
 
                             let lost_focus = response.lost_focus();
@@ -343,13 +351,13 @@ impl FloatingWindow {
                             let title_response = if let Some(first_char) = chars.next() {
                                 if (first_char as u32) >= 0xE000 && (first_char as u32) <= 0xF8FF {
                                     let rest: String = chars.collect();
-                                    let job = Icons::label_job(&first_char.to_string(), rest.trim_start(), 12.0, title_color);
+                                    let job = Icons::label_job(&first_char.to_string(), rest.trim_start(), title_font_size, title_color);
                                     ui.add(egui::Label::new(job).sense(egui::Sense::click()))
                                 } else {
                                     ui.add(
                                         egui::Label::new(
                                             egui::RichText::new(&display_title)
-                                                .size(12.0)
+                                                .size(title_font_size)
                                                 .color(title_color),
                                         )
                                         .sense(egui::Sense::click()),
@@ -359,7 +367,7 @@ impl FloatingWindow {
                                 ui.add(
                                     egui::Label::new(
                                         egui::RichText::new(&display_title)
-                                            .size(12.0)
+                                            .size(title_font_size)
                                             .color(title_color),
                                     )
                                     .sense(egui::Sense::click()),
@@ -381,25 +389,29 @@ impl FloatingWindow {
 
                             let close_btn = ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new(Icons::CLOSE).size(11.0).color(btn_color),
+                                    Icons::rich(Icons::CLOSE, btn_icon_size).color(btn_color),
                                 )
                                 .fill(egui::Color32::TRANSPARENT)
                                 .rounding(4.0)
                                 .min_size(egui::vec2(20.0, 20.0)),
-                            );
+                            ).on_hover_text("Close");
                             if close_btn.clicked() {
                                 is_open = false;
                             }
 
-                            let max_icon = if self.is_maximized { Icons::APP_WINDOW } else { Icons::SQUARE };
+                            let (max_icon, max_tooltip) = if self.is_maximized {
+                                (Icons::BROWSERS, "Restore")
+                            } else {
+                                (Icons::SQUARE, "Maximize")
+                            };
                             let max_btn = ui.add(
                                 egui::Button::new(
-                                    egui::RichText::new(max_icon).size(11.0).color(btn_color),
+                                    Icons::rich(max_icon, btn_icon_size).color(btn_color),
                                 )
                                 .fill(egui::Color32::TRANSPARENT)
                                 .rounding(4.0)
                                 .min_size(egui::vec2(20.0, 20.0)),
-                            );
+                            ).on_hover_text(max_tooltip);
                             if max_btn.clicked() {
                                 toggle_maximized = true;
                             }
@@ -495,7 +507,7 @@ impl FloatingWindow {
                         let screen = ctx.screen_rect();
                         let tile_rect = t.compute_rect(screen);
                         self.set_pos_size = Some((tile_rect.min, tile_rect.size()));
-                        self.is_maximized = (t == TileTarget::Maximize);
+                        self.is_maximized = t == TileTarget::Maximize;
                     }
                 }
 

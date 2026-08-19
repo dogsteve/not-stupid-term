@@ -283,14 +283,18 @@ impl XTermApp {
 
                     // 2. Workspace Tabs (Căn CHÍNH GIỮA DỌC/NGANG với 2 phím mũi tên cuộn < và >)
                     let scroll_id = ui.id().with("workspace_tabs_scroll");
+                    let ui_font_size = self.config.ui_font_size;
+                    let topbar_icon_size = (ui_font_size - 1.0).max(12.0);
+                    let topbar_tab_icon_size = (ui_font_size - 2.0).max(11.0);
+                    let btn_h = 24.0;
 
                     // Left arrow (<)
                     if ui.add(
-                        egui::Button::new(Icons::rich(Icons::CARET_LEFT, 11.0))
+                        egui::Button::new(Icons::rich(Icons::CARET_LEFT, topbar_tab_icon_size))
                             .fill(egui::Color32::TRANSPARENT)
                             .stroke(egui::Stroke::NONE)
                             .rounding(4.0)
-                            .min_size(egui::vec2(16.0, 20.0)),
+                            .min_size(egui::vec2(16.0, btn_h)),
                     ).on_hover_text("Scroll tabs left").clicked() {
                         let cur = ctx.data(|d| d.get_temp::<f32>(scroll_id)).unwrap_or(0.0);
                         ctx.data_mut(|d| d.insert_temp(scroll_id, (cur - 120.0).max(0.0)));
@@ -354,46 +358,27 @@ impl XTermApp {
                                                     let resp = ui.add(
                                                         egui::TextEdit::singleline(&mut workspace.name)
                                                             .id(edit_id)
-                                                            .desired_width(90.0)
-                                                            .font(egui::FontId::proportional(12.0)),
+                                                            .font(egui::FontId::proportional(topbar_icon_size))
+                                                            .desired_width(70.0),
                                                     );
-
-                                                    if !ui.memory(|m| m.has_focus(edit_id)) {
-                                                        ui.memory_mut(|m| m.request_focus(edit_id));
-                                                    }
-
-                                                    let lost_focus = resp.lost_focus();
-                                                    let enter_esc = ui.input(|i| {
-                                                        i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)
-                                                    });
-                                                    let clicked_outside = ui.input(|i| i.pointer.any_pressed()) && !resp.hovered();
-
-                                                    if lost_focus || enter_esc || clicked_outside {
+                                                    if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                                         workspace.is_editing_name = false;
                                                     }
                                                 } else {
-                                                    let text_color = if is_active {
-                                                        ctx.style().visuals.text_color()
-                                                    } else if is_dark {
-                                                        egui::Color32::from_gray(140)
-                                                    } else {
-                                                        egui::Color32::from_gray(120)
-                                                    };
-
-                                                    let tab_resp = ui.horizontal_centered(|ui| {
-                                                        let name_text = if is_active {
-                                                            egui::RichText::new(&workspace.name).size(12.0).color(text_color).strong()
+                                                    let tab_resp = ui.horizontal(|ui| {
+                                                        let label_color = if is_active {
+                                                            ui.visuals().text_color()
                                                         } else {
-                                                            egui::RichText::new(&workspace.name).size(12.0).color(text_color)
+                                                            ui.visuals().weak_text_color()
                                                         };
 
                                                         let name_resp = ui.add(
-                                                            egui::Button::new(name_text)
-                                                                .fill(egui::Color32::TRANSPARENT)
-                                                                .stroke(egui::Stroke::NONE)
-                                                                .frame(false)
-                                                                .rounding(4.0)
-                                                                .min_size(egui::vec2(0.0, 16.0)),
+                                                            egui::Label::new(
+                                                                egui::RichText::new(&workspace.name)
+                                                                    .size(topbar_icon_size)
+                                                                    .color(label_color),
+                                                            )
+                                                            .sense(egui::Sense::click()),
                                                         );
 
                                                         if name_resp.clicked() {
@@ -403,14 +388,15 @@ impl XTermApp {
                                                             workspace.is_editing_name = true;
                                                         }
 
-                                                        let close_color = if is_dark {
-                                                            egui::Color32::from_gray(110)
+                                                        let close_color = if is_active {
+                                                            ui.visuals().weak_text_color()
                                                         } else {
-                                                            egui::Color32::from_gray(140)
+                                                            egui::Color32::from_gray(100)
                                                         };
+
                                                         let close_resp = ui.add(
                                                             egui::Button::new(
-                                                                egui::RichText::new(Icons::CLOSE).size(9.5).color(close_color),
+                                                                Icons::rich(Icons::CLOSE, (topbar_tab_icon_size - 1.0).max(9.0)).color(close_color),
                                                             )
                                                             .fill(egui::Color32::TRANSPARENT)
                                                             .stroke(egui::Stroke::NONE)
@@ -426,11 +412,11 @@ impl XTermApp {
                                                     });
 
                                                     tab_resp.response.context_menu(|ui| {
-                                                        if ui.button(Icons::label_job(Icons::EDIT, "Rename", 12.0, ui.visuals().text_color())).clicked() {
+                                                        if ui.button(Icons::label_job(Icons::EDIT, "Rename", topbar_icon_size, ui.visuals().text_color())).clicked() {
                                                             workspace.is_editing_name = true;
                                                             ui.close_menu();
                                                         }
-                                                        if ui.button(Icons::label_job(Icons::CLOSE, "Close", 12.0, ui.visuals().text_color())).clicked() {
+                                                        if ui.button(Icons::label_job(Icons::CLOSE, "Close", topbar_icon_size, ui.visuals().text_color())).clicked() {
                                                             to_remove = Some(idx);
                                                             ui.close_menu();
                                                         }
@@ -452,10 +438,10 @@ impl XTermApp {
                                         // New tab button (+)
                                         ui.add_space(2.0);
                                         if ui.add(
-                                            egui::Button::new(egui::RichText::new("+").size(13.0))
+                                            egui::Button::new(Icons::rich(Icons::ADD, topbar_tab_icon_size))
                                                 .fill(egui::Color32::TRANSPARENT)
                                                 .rounding(4.0)
-                                                .min_size(egui::vec2(22.0, 22.0)),
+                                                .min_size(egui::vec2(22.0, btn_h)),
                                         ).on_hover_text("New workspace").clicked() {
                                             let n = self.workspaces.len() + 1;
                                             self.workspaces.push(Workspace::new(&format!("Workspace {}", n), ctx));
@@ -468,11 +454,11 @@ impl XTermApp {
 
                     // Right arrow (>)
                     if ui.add(
-                        egui::Button::new(Icons::rich(Icons::CARET_RIGHT, 11.0))
+                        egui::Button::new(Icons::rich(Icons::CARET_RIGHT, topbar_tab_icon_size))
                             .fill(egui::Color32::TRANSPARENT)
                             .stroke(egui::Stroke::NONE)
                             .rounding(4.0)
-                            .min_size(egui::vec2(16.0, 20.0)),
+                            .min_size(egui::vec2(16.0, btn_h)),
                     ).on_hover_text("Scroll tabs right").clicked() {
                         let cur = ctx.data(|d| d.get_temp::<f32>(scroll_id)).unwrap_or(0.0);
                         ctx.data_mut(|d| d.insert_temp(scroll_id, cur + 120.0));
@@ -486,28 +472,33 @@ impl XTermApp {
                             let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
 
                             if ui.add(
-                                egui::Button::new(egui::RichText::new(Icons::CLOSE).size(12.0))
+                                egui::Button::new(Icons::rich(Icons::CLOSE, topbar_icon_size))
                                     .fill(egui::Color32::TRANSPARENT)
                                     .rounding(4.0)
-                                    .min_size(egui::vec2(28.0, 24.0)),
+                                    .min_size(egui::vec2(28.0, btn_h)),
                             ).on_hover_text("Close").clicked() {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
 
+                            let (max_icon, max_tooltip) = if is_maximized {
+                                (Icons::BROWSERS, "Restore")
+                            } else {
+                                (Icons::SQUARE, "Maximize")
+                            };
                             if ui.add(
-                                egui::Button::new(egui::RichText::new(Icons::APP_WINDOW).size(12.0))
+                                egui::Button::new(Icons::rich(max_icon, topbar_icon_size))
                                     .fill(egui::Color32::TRANSPARENT)
                                     .rounding(4.0)
-                                    .min_size(egui::vec2(28.0, 24.0)),
-                            ).on_hover_text(if is_maximized { "Restore" } else { "Maximize" }).clicked() {
+                                    .min_size(egui::vec2(28.0, btn_h)),
+                            ).on_hover_text(max_tooltip).clicked() {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
                             }
 
                             if ui.add(
-                                egui::Button::new(egui::RichText::new(Icons::MINUS).size(12.0))
+                                egui::Button::new(Icons::rich(Icons::MINUS, topbar_icon_size))
                                     .fill(egui::Color32::TRANSPARENT)
                                     .rounding(4.0)
-                                    .min_size(egui::vec2(28.0, 24.0)),
+                                    .min_size(egui::vec2(28.0, btn_h)),
                             ).on_hover_text("Minimize").clicked() {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                             }
@@ -516,9 +507,9 @@ impl XTermApp {
                         }
 
                         let btn_border = if is_dark {
-                            egui::Color32::from_white_alpha(30)
+                            egui::Color32::from_white_alpha(35)
                         } else {
-                            egui::Color32::from_black_alpha(25)
+                            egui::Color32::from_black_alpha(30)
                         };
                         let btn_fill = if is_dark {
                             egui::Color32::from_white_alpha(15)
@@ -526,13 +517,36 @@ impl XTermApp {
                             egui::Color32::from_black_alpha(10)
                         };
 
-                        // Active Windows List Selector Dropdown
+                        let btn_rounding = egui::Rounding::same(6.0);
+                        let btn_stroke = egui::Stroke::new(1.0, btn_border);
+
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                        ui.spacing_mut().button_padding = egui::vec2(8.0, 2.0);
+                        ui.spacing_mut().interact_size = egui::vec2(24.0, btn_h);
+
+                        let saved_inactive = ui.visuals().widgets.inactive;
+                        let saved_hovered = ui.visuals().widgets.hovered;
+                        let saved_active = ui.visuals().widgets.active;
+
+                        ui.visuals_mut().widgets.inactive.weak_bg_fill = btn_fill;
+                        ui.visuals_mut().widgets.inactive.bg_stroke = btn_stroke;
+                        ui.visuals_mut().widgets.inactive.rounding = btn_rounding;
+
+                        ui.visuals_mut().widgets.hovered.weak_bg_fill = if is_dark { egui::Color32::from_white_alpha(30) } else { egui::Color32::from_black_alpha(20) };
+                        ui.visuals_mut().widgets.hovered.bg_stroke = btn_stroke;
+                        ui.visuals_mut().widgets.hovered.rounding = btn_rounding;
+
+                        ui.visuals_mut().widgets.active.weak_bg_fill = if is_dark { egui::Color32::from_white_alpha(45) } else { egui::Color32::from_black_alpha(35) };
+                        ui.visuals_mut().widgets.active.bg_stroke = btn_stroke;
+                        ui.visuals_mut().widgets.active.rounding = btn_rounding;
+
+                        // 1. Active Windows List Selector Dropdown
                         let win_count = self.workspaces.get(self.active_workspace_idx).map_or(0, |ws| ws.windows.len());
-                        let win_btn_job = Icons::label_job(Icons::APP_WINDOW, &format!("Windows ({})", win_count), 11.5, ui.visuals().text_color());
+                        let win_btn_job = Icons::label_job(Icons::APP_WINDOW, &format!("Windows ({})", win_count), topbar_icon_size, ui.visuals().text_color());
 
                         ui.menu_button(win_btn_job, |ui| {
                             ui.set_min_width(220.0);
-                            ui.label(egui::RichText::new("Active Windows in Workspace").weak().size(11.0));
+                            ui.label(egui::RichText::new("Active Windows in Workspace").weak().size((ui_font_size - 2.0).max(9.0)));
                             ui.separator();
 
                             let mut focus_win_idx = None;
@@ -540,10 +554,10 @@ impl XTermApp {
 
                             if let Some(ws) = self.workspaces.get(self.active_workspace_idx) {
                                 if ws.windows.is_empty() {
-                                    ui.label(egui::RichText::new("No active windows").weak().size(12.0));
+                                    ui.label(egui::RichText::new("No active windows").weak().size((ui_font_size - 1.0).max(10.0)));
                                 } else {
                                     for (idx, win) in ws.windows.iter().enumerate() {
-                                        let is_last = (idx == ws.windows.len() - 1);
+                                        let is_last = idx == ws.windows.len() - 1;
                                         let title = win.custom_title.clone().unwrap_or_else(|| win.app.title());
 
                                         ui.horizontal(|ui| {
@@ -554,7 +568,7 @@ impl XTermApp {
                                             }
 
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if ui.button(Icons::rich(Icons::CLOSE, 10.0)).clicked() {
+                                                if ui.button(Icons::rich(Icons::CLOSE, (ui_font_size - 3.0).max(9.0))).clicked() {
                                                     close_win_idx = Some(idx);
                                                     ui.close_menu();
                                                 }
@@ -581,74 +595,35 @@ impl XTermApp {
                             }
                         });
 
-                        ui.add_space(4.0);
-
+                        // 2. Settings button
+                        let gear_job = Icons::label_job(Icons::GEAR, "", topbar_icon_size, ui.visuals().text_color());
                         if ui.add(
-                            egui::Button::new(Icons::rich(Icons::GEAR, 13.0))
-                                .fill(btn_fill)
-                                .stroke(egui::Stroke::new(1.0, btn_border))
-                                .rounding(6.0)
-                                .min_size(egui::vec2(30.0, 24.0)),
+                            egui::Button::new(gear_job)
+                                .min_size(egui::vec2(28.0, btn_h)),
                         ).on_hover_text("Settings (Cmd+, / Ctrl+,)").clicked() {
                             self.open_or_focus_settings();
                         }
 
-                        // New window menu button — styled to match Search/Settings buttons.
-                        // We temporarily override the inactive widget style so menu_button
-                        // renders with the same fill/border/rounding as other topbar buttons.
-                        ui.add_space(4.0);
+                        // 3. New window menu button
                         if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
-                            let saved_fill   = ui.visuals().widgets.inactive.weak_bg_fill;
-                            let saved_stroke = ui.visuals().widgets.inactive.bg_stroke;
-                            let saved_round  = ui.visuals().widgets.inactive.rounding;
-                            ui.visuals_mut().widgets.inactive.weak_bg_fill = btn_fill;
-                            ui.visuals_mut().widgets.inactive.bg_stroke    = egui::Stroke::new(1.0, btn_border);
-                            ui.visuals_mut().widgets.inactive.rounding      = egui::Rounding::same(6.0);
-
-                            let new_label = Icons::label_job(Icons::ADD, "New", 11.5, ui.visuals().text_color());
+                            let new_label = Icons::label_job(Icons::ADD, "New", topbar_icon_size, ui.visuals().text_color());
                             ui.menu_button(new_label, |ui| {
                                 ws.show_new_window_menu(ui, ctx);
                             });
-
-                            // Restore original visuals so other widgets are unaffected.
-                            ui.visuals_mut().widgets.inactive.weak_bg_fill = saved_fill;
-                            ui.visuals_mut().widgets.inactive.bg_stroke    = saved_stroke;
-                            ui.visuals_mut().widgets.inactive.rounding      = saved_round;
                         }
 
-                        {
-                            let mut job = egui::text::LayoutJob::default();
-                            job.append(
-                                Icons::SEARCH,
-                                0.0,
-                                egui::text::TextFormat {
-                                    font_id: egui::FontId::new(
-                                        11.5,
-                                        egui::FontFamily::Name("phosphor".into()),
-                                    ),
-                                    color: egui::Color32::PLACEHOLDER,
-                                    ..Default::default()
-                                },
-                            );
-                            job.append(
-                                " Search",
-                                0.0,
-                                egui::text::TextFormat {
-                                    font_id: egui::FontId::proportional(11.5),
-                                    color: egui::Color32::PLACEHOLDER,
-                                    ..Default::default()
-                                },
-                            );
-                            if ui.add(
-                                egui::Button::new(job)
-                                    .fill(btn_fill)
-                                    .stroke(egui::Stroke::new(1.0, btn_border))
-                                    .rounding(6.0)
-                                    .min_size(egui::vec2(68.0, 24.0)),
-                            ).on_hover_text("Search (Cmd+P / Ctrl+P)").clicked() {
-                                self.palette.toggle();
-                            }
+                        // 4. Search bar button
+                        let search_job = Icons::label_job(Icons::SEARCH, "Search", topbar_icon_size, egui::Color32::PLACEHOLDER);
+                        if ui.add(
+                            egui::Button::new(search_job)
+                                .min_size(egui::vec2(68.0, btn_h)),
+                        ).on_hover_text("Search (Cmd+P / Ctrl+P)").clicked() {
+                            self.palette.toggle();
                         }
+
+                        ui.visuals_mut().widgets.inactive = saved_inactive;
+                        ui.visuals_mut().widgets.hovered = saved_hovered;
+                        ui.visuals_mut().widgets.active = saved_active;
                     });
                 });
             });
@@ -809,7 +784,48 @@ impl eframe::App for XTermApp {
                 self.open_or_focus_settings();
             } else if match_shortcut(ctx, "Cmd+Shift+G") || match_shortcut(ctx, "Ctrl+Shift+G") {
                 self.open_or_focus_git_manager();
-            } else if match_shortcut(ctx, &shortcuts.command_palette) || match_shortcut(ctx, &shortcuts.find) {
+            } else if match_shortcut(ctx, &shortcuts.find) {
+                // Context-aware Find (Ctrl+F / Cmd+F):
+                // If active focused window is EditorApp, open the editor's Find bar.
+                // Otherwise toggle global command palette.
+                let mut handled = false;
+                if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
+                    if let Some(active_win) = ws.windows.last_mut() {
+                        if let Some(editor) = active_win.app.as_any_mut().and_then(|a| a.downcast_mut::<EditorApp>()) {
+                            editor.find_state.is_open = true;
+                            editor.find_state.show_replace = false;
+                            editor.find_state.update_matches(&editor.content);
+                            editor.focus_find_requested = true;
+                            ctx.request_repaint();
+                            handled = true;
+                        }
+                    }
+                }
+                if !handled {
+                    self.palette.toggle();
+                }
+            } else if match_shortcut(ctx, "Cmd+H") || match_shortcut(ctx, "Ctrl+H") {
+                if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
+                    if let Some(active_win) = ws.windows.last_mut() {
+                        if let Some(editor) = active_win.app.as_any_mut().and_then(|a| a.downcast_mut::<EditorApp>()) {
+                            editor.find_state.is_open = true;
+                            editor.find_state.show_replace = true;
+                            editor.find_state.update_matches(&editor.content);
+                            editor.focus_replace_requested = true;
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+            } else if match_shortcut(ctx, "Cmd+S") || match_shortcut(ctx, "Ctrl+S") {
+                if let Some(ws) = self.workspaces.get_mut(self.active_workspace_idx) {
+                    if let Some(active_win) = ws.windows.last_mut() {
+                        if let Some(editor) = active_win.app.as_any_mut().and_then(|a| a.downcast_mut::<EditorApp>()) {
+                            editor.save_current_file(&mut self.undo_manager);
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+            } else if match_shortcut(ctx, &shortcuts.command_palette) {
                 self.palette.toggle();
             } else if match_shortcut(ctx, &shortcuts.jump_workspace_1) && !self.workspaces.is_empty() {
                 self.active_workspace_idx = 0;
@@ -989,6 +1005,10 @@ fn match_shortcut(ctx: &egui::Context, shortcut: &str) -> bool {
             "W" | "w" => egui::Key::W,
             "P" | "p" => egui::Key::P,
             "F" | "f" => egui::Key::F,
+            "H" | "h" => egui::Key::H,
+            "S" | "s" => egui::Key::S,
+            "N" | "n" => egui::Key::N,
+            "O" | "o" => egui::Key::O,
             "G" | "g" => egui::Key::G,
             "Z" | "z" => egui::Key::Z,
             "Tab" => egui::Key::Tab,

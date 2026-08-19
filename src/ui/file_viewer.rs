@@ -100,7 +100,7 @@ impl WindowApp for FileViewerApp {
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
-        _config: &mut crate::ui::settings::AppConfig,
+        config: &mut crate::ui::settings::AppConfig,
         _undo: &mut crate::ui::undo_manager::UndoManager,
     ) -> Option<WindowAction> {
         let mut action = None;
@@ -159,9 +159,12 @@ impl WindowApp for FileViewerApp {
             let is_dark = ui.visuals().dark_mode;
             let icon_color = ui.visuals().text_color();
 
+            let ui_font_size = config.ui_font_size;
+            let icon_sz = (ui_font_size).max(11.0);
+
             // Back
             let can_back = self.history_idx > 0;
-            let back_job = Icons::label_job(Icons::BACK, "", 13.0, icon_color);
+            let back_job = Icons::label_job(Icons::BACK, "", icon_sz, icon_color);
             if ui
                 .add_enabled(
                     can_back,
@@ -178,7 +181,7 @@ impl WindowApp for FileViewerApp {
 
             // Forward
             let can_fwd = self.history_idx + 1 < self.path_history.len();
-            let fwd_job = Icons::label_job(Icons::FORWARD, "", 13.0, icon_color);
+            let fwd_job = Icons::label_job(Icons::FORWARD, "", icon_sz, icon_color);
             if ui
                 .add_enabled(
                     can_fwd,
@@ -195,7 +198,7 @@ impl WindowApp for FileViewerApp {
 
             // Up (parent directory) — use CARET_UP which is the correct icon
             let has_parent = self.root_path.parent().is_some();
-            let up_job = Icons::label_job(Icons::CARET_UP, "", 13.0, icon_color);
+            let up_job = Icons::label_job(Icons::CARET_UP, "", icon_sz, icon_color);
             if ui
                 .add_enabled(
                     has_parent,
@@ -246,13 +249,13 @@ impl WindowApp for FileViewerApp {
                             egui::TextEdit::singleline(&mut self.path_edit_text)
                                 .id(path_edit_id)
                                 .desired_width(avail_w - 4.0)
-                                .font(egui::FontId::proportional(12.0))
+                                .font(egui::FontId::proportional((config.ui_font_size - 1.0).max(10.0)))
                                 .frame(false),
                         );
 
                         // Auto-focus the input on the first frame it appears
-                        if !ui.memory(|m| m.has_focus(path_edit_id)) {
-                            ui.memory_mut(|m| m.request_focus(path_edit_id));
+                        if !resp.has_focus() {
+                            resp.request_focus();
                         }
 
                         let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -271,13 +274,13 @@ impl WindowApp for FileViewerApp {
                         // Show folder icon + path. Click → enter edit mode.
                         ui.horizontal(|ui| {
                             ui.add(egui::Label::new(
-                                Icons::rich(Icons::FOLDER_OPEN, 13.0)
+                                Icons::rich(Icons::FOLDER_OPEN, (config.ui_font_size).max(11.0))
                                     .color(egui::Color32::from_rgb(230, 180, 60)),
                             ));
                             let label_resp = ui.add(
                                 egui::Label::new(
                                     egui::RichText::new(&path_str)
-                                        .size(12.0)
+                                        .size((config.ui_font_size - 1.0).max(10.0))
                                         .color(if is_dark {
                                             egui::Color32::from_gray(170)
                                         } else {
@@ -298,7 +301,7 @@ impl WindowApp for FileViewerApp {
         });
 
         ui.add_space(2.0);
-        ui.label(egui::RichText::new(&self.status).size(11.0).weak());
+        ui.label(egui::RichText::new(&self.status).size((config.ui_font_size - 2.0).max(9.0)).weak());
         ui.add_space(4.0);
         ui.separator();
         ui.add_space(4.0);
@@ -449,8 +452,11 @@ fn render_dir_tree(
             continue;
         }
 
+        let ui_font_size = ui.style().text_styles.get(&egui::TextStyle::Body).map(|f| f.size).unwrap_or(13.0);
+        let item_font_size = (ui_font_size - 1.0).max(10.0);
+
         if is_dir {
-            let job = Icons::label_job(Icons::FOLDER, &name, 12.0, ui.visuals().text_color());
+            let job = Icons::label_job(Icons::FOLDER, &name, item_font_size, ui.visuals().text_color());
             let header = egui::CollapsingHeader::new(job).id_salt(&path);
 
             let res = header.show(ui, |ui| render_dir_tree(ui, ctx, &path, depth + 1));
@@ -469,7 +475,7 @@ fn render_dir_tree(
             }
         } else {
             let icon = Icons::get_file_icon(&name);
-            let job = Icons::label_job(icon, &name, 12.0, ui.visuals().text_color());
+            let job = Icons::label_job(icon, &name, item_font_size, ui.visuals().text_color());
             let path_str = path.to_string_lossy().to_string();
 
             let btn = egui::Button::new(job)

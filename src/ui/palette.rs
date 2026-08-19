@@ -181,6 +181,8 @@ impl CommandPalette {
             egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), text_alpha)
         };
 
+        let ui_font_size = ctx.style().text_styles.get(&egui::TextStyle::Body).map(|f| f.size).unwrap_or(13.0);
+
         egui::Window::new("Command Palette")
             .title_bar(false)
             .frame(frame)
@@ -190,11 +192,11 @@ impl CommandPalette {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0 + slide_offset])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(Icons::rich(Icons::SEARCH, 18.0).color(text_col));
+                    ui.label(Icons::rich(Icons::SEARCH, (ui_font_size + 4.0).max(16.0)).color(text_col));
                     let input = ui.add(
                         egui::TextEdit::singleline(&mut self.query)
                             .hint_text("Type command or file name...")
-                            .font(egui::FontId::proportional(16.0))
+                            .font(egui::FontId::proportional(ui_font_size + 3.0))
                             .desired_width(f32::INFINITY)
                             .text_color(text_col),
                     );
@@ -256,7 +258,7 @@ impl CommandPalette {
                             };
 
                             // All palette icons are Phosphor PUA — always use label_job.
-                            let job = Icons::label_job(item.icon, &item.label, 13.0, label_color);
+                            let job = Icons::label_job(item.icon, &item.label, ui_font_size, label_color);
                             let button = egui::Button::new(job)
                                 .fill(btn_fill)
                                 .rounding(6.0)

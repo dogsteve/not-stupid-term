@@ -96,6 +96,7 @@ pub struct GitApp {
     pub new_branch_name: String,
     pub is_creating_branch: bool,
     pub needs_refresh: bool,
+    pub diff_scroll_x: f32,
 }
 
 impl GitApp {
@@ -121,6 +122,7 @@ impl GitApp {
             new_branch_name: String::new(),
             is_creating_branch: false,
             needs_refresh: false,
+            diff_scroll_x: 0.0,
         };
 
         app.refresh_all();
@@ -259,6 +261,7 @@ impl GitApp {
         let (rows, hunks) = compute_side_by_side_diff(&self.left_file_content, &self.right_file_content);
         self.diff_rows = rows;
         self.diff_hunks = hunks;
+        self.diff_scroll_x = 0.0;
     }
 
     pub fn stage_file(&mut self, rel_path: &str) {
@@ -377,6 +380,11 @@ impl GitApp {
             .status();
         self.status_message = format!("Deleted {}", rel_path);
         self.refresh_all();
+    }
+
+    pub fn select_file(&mut self, path: &str) {
+        self.selected_file_path = Some(path.to_string());
+        self.load_diff_for_file(path);
     }
 
     pub fn select_prev_file(&mut self) {
@@ -666,11 +674,11 @@ impl WindowApp for GitApp {
     }
 
     fn default_size(&self) -> [f32; 2] {
-        [1080.0, 700.0]
+        [820.0, 520.0]
     }
 
     fn min_size(&self) -> [f32; 2] {
-        [750.0, 500.0]
+        [580.0, 320.0]
     }
 
     fn window_type(&self) -> &'static str {
@@ -681,7 +689,7 @@ impl WindowApp for GitApp {
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
-        _config: &mut crate::ui::settings::AppConfig,
+        config: &mut crate::ui::settings::AppConfig,
         undo: &mut crate::ui::undo_manager::UndoManager,
     ) -> Option<WindowAction> {
         if self.needs_refresh {
@@ -693,18 +701,16 @@ impl WindowApp for GitApp {
         let dark = |r: u8, g: u8, b: u8| egui::Color32::from_rgb(r, g, b);
         let gray = |v: u8| egui::Color32::from_gray(v);
 
+        let ui_font_size = config.ui_font_size;
+        let mono_font_size = config.mono_font_size;
+        let mono_lnum_size = (mono_font_size - 1.0).max(9.0);
+
         // IntelliJ IDEA Dark Theme Palette
         let panel_bg  = if is_dark { dark(43, 45, 48) } else { dark(240, 240, 245) };  // #2b2d30
         let diff_bg   = if is_dark { dark(30, 31, 34) } else { dark(255, 255, 255) };  // #1e1f22
         let border_c  = if is_dark { dark(57, 59, 64) } else { gray(210) };             // #393b40
         let commit_bg = if is_dark { dark(30, 31, 34) } else { dark(245, 245, 250) };  // #1e1f22
         let hdr_bg    = if is_dark { dark(37, 38, 42) } else { dark(235, 235, 240) };  // #25262a
-
-        let total_size = ui.available_size();
-
-        // Constrain layout to available space so the window doesn't grow unbounded
-        ui.set_max_width(total_size.x);
-        ui.set_max_height(total_size.y);
 
         ui.vertical(|ui| {
             // =========================================================================
@@ -716,12 +722,12 @@ impl WindowApp for GitApp {
                 .stroke(egui::Stroke::new(1.0, border_c))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(Icons::rich(Icons::GIT_BRANCH, 14.0));
+                        ui.label(Icons::rich(Icons::GIT_BRANCH, (ui_font_size + 1.0).max(12.0)));
                         ui.menu_button(
-                            egui::RichText::new(format!("Branch: {}", self.current_branch)).strong().size(12.5),
+                            egui::RichText::new(format!("Branch: {}", self.current_branch)).strong().size((ui_font_size - 0.5).max(10.0)),
                             |ui| {
                                 ui.set_min_width(180.0);
-                                ui.label(egui::RichText::new("Switch Branch").weak().size(11.0));
+                                ui.label(egui::RichText::new("Switch Branch").weak().size((ui_font_size - 2.0).max(9.0)));
                                 ui.separator();
                                 let branches = self.branches.clone();
                                 for b in branches {
@@ -761,15 +767,15 @@ impl WindowApp for GitApp {
                         ui.add_space(8.0);
                         ui.separator();
                         ui.add_space(6.0);
-                        if ui.button(Icons::job(Icons::REFRESH, "Refresh", 12.0)).clicked()       { self.refresh_all(); }
-                        if ui.button(Icons::job(Icons::CARET_DOWN_KEY, "Pull", 12.0)).clicked()    { self.pull(); }
-                        if ui.button(Icons::job(Icons::CARET_UP_KEY, "Push", 12.0)).clicked()      { self.push(); }
+                        if ui.button(Icons::job(Icons::REFRESH, "Refresh", 12.0)).clicked()  { self.refresh_all(); }
+                        if ui.button(Icons::job(Icons::DOWNLOAD, "Pull", 12.0)).clicked()     { self.pull(); }
+                        if ui.button(Icons::job(Icons::UPLOAD, "Push", 12.0)).clicked()       { self.push(); }
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let c = if self.status_message.starts_with("Error") {
                                 egui::Color32::from_rgb(240, 90, 90)
                             } else { ui.visuals().weak_text_color() };
-                            ui.label(egui::RichText::new(&self.status_message).size(12.0).color(c));
+                            ui.label(egui::RichText::new(&self.status_message).size((ui_font_size - 1.0).max(10.0)).color(c));
                         });
                     });
                 });
@@ -779,247 +785,256 @@ impl WindowApp for GitApp {
             // =========================================================================
             // 2. MAIN SPLIT BODY (IntelliJ Commit Sidebar + Diff Pane)
             // =========================================================================
-            let body_h = (total_size.y - 42.0).max(100.0);
-            let sidebar_w = 280.0_f32;
-            let diff_w = (total_size.x - sidebar_w - 10.0).max(200.0);
+            let body_avail_w = ui.available_width();
+            let body_avail_h = (ui.available_height() - 4.0).max(100.0);
+            let sidebar_w = 250.0_f32.min(body_avail_w * 0.4).max(180.0);
 
-            ui.horizontal(|ui| {
-                // ---------------------------------------------------------------------
-                // A) LEFT SIDEBAR (IntelliJ Commit / Changes Panel)
-                // ---------------------------------------------------------------------
-                egui::Frame::default()
-                    .fill(panel_bg)
-                    .inner_margin(6.0)
-                    .rounding(4.0)
-                    .stroke(egui::Stroke::new(1.0, border_c))
-                    .show(ui, |ui| {
-                        ui.set_width(sidebar_w);
-                        ui.set_height(body_h);
-
-                        ui.vertical(|ui| {
-                            let staged_n   = self.files.iter().filter(|f|  f.staged).count();
-                            let unstaged_n = self.files.iter().filter(|f| !f.staged).count();
-
-                            // Sidebar Header
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Commit").strong().size(13.0));
-                                ui.label(egui::RichText::new(format!("({} files)", self.files.len())).weak().size(11.5));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button("Stage All").clicked() {
-                                        undo.push(crate::ui::undo_manager::UndoAction::GitStageAll { 
-                                            repo_path: self.repo_path.clone() 
-                                        }, "Stage all");
-                                        self.stage_all(); 
-                                    }
-                                    if ui.small_button("Unstage All").clicked() {
-                                        undo.push(crate::ui::undo_manager::UndoAction::GitUnstageAll { 
-                                            repo_path: self.repo_path.clone() 
-                                        }, "Unstage all");
-                                        self.unstage_all(); 
-                                    }
-                                });
-                            });
-                            ui.separator();
-
-                            // Top File Tree (Fills available space above commit box)
-                            let commit_box_h = 150.0_f32;
-                            let tree_h = (body_h - commit_box_h - 24.0).max(80.0);
-
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(sidebar_w - 12.0, tree_h),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("git_sidebar_file_tree_scroll")
-                                        .auto_shrink([false, false])
-                                        .max_height(tree_h)
-                                        .show(ui, |ui| {
-                                            // STAGED CHANGES
-                                            ui.collapsing(
-                                                egui::RichText::new(format!("Staged Changes ({})", staged_n))
-                                                    .strong().size(11.5),
-                                                |ui| {
-                                                    let items: Vec<GitFileItem> = self.files.iter()
-                                                        .filter(|f| f.staged).cloned().collect();
-                                                    if items.is_empty() {
-                                                        ui.label(egui::RichText::new("No staged files").weak().size(11.0));
-                                                    }
-                                                    for item in items {
-                                                        let sel = self.selected_file_path.as_deref() == Some(&item.path);
-                                                        ui.push_id(format!("staged_{}", item.path), |ui| {
-                                                            ui.horizontal(|ui| {
-                                                                let mut chk = true;
-                                                                if ui.checkbox(&mut chk, "").changed() {
-                                                                    let p = item.path.clone();
-                                                                    undo.push(crate::ui::undo_manager::UndoAction::GitUnstageFile { 
-                                                                        repo_path: self.repo_path.clone(), 
-                                                                        rel_path: p.clone() 
-                                                                    }, format!("Unstage: {}", p));
-                                                                    self.unstage_file(&p);
-                                                                }
-                                                                if ui.selectable_label(sel,
-                                                                    format!("{} {}", Icons::get_file_icon(&item.path), item.path)
-                                                                ).clicked() {
-                                                                    let p = item.path.clone();
-                                                                    self.selected_file_path = Some(p.clone());
-                                                                    self.load_diff_for_file(&p);
-                                                                }
-                                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                                    let p = item.path.clone();
-                                                                    if ui.small_button("D").on_hover_text("Delete file").clicked() {
-                                                                        let full_path = std::path::Path::new(&self.repo_path).join(&p);
-                                                                        let was_dir = full_path.is_dir();
-                                                                        let saved = if was_dir { Vec::new() } else { std::fs::read(&full_path).unwrap_or_default() };
-                                                                        undo.push(crate::ui::undo_manager::UndoAction::GitDeleteFile { 
-                                                                            repo_path: self.repo_path.clone(), 
-                                                                            rel_path: p.clone(),
-                                                                            saved_content: saved,
-                                                                            was_dir,
-                                                                        }, format!("Delete: {}", p));
-                                                                        self.delete_file(&p);
-                                                                    }
-                                                                    ui.label(egui::RichText::new(item.status.label())
-                                                                        .size(9.0).color(item.status.color()));
-                                                                });
-                                                            });
-                                                        });
-                                                    }
-                                                },
-                                            );
-
-                                            ui.add_space(4.0);
-
-                                            // UNSTAGED / UNVERSIONED
-                                            ui.collapsing(
-                                                egui::RichText::new(format!("Unstaged & Unversioned ({})", unstaged_n))
-                                                    .strong().size(11.5),
-                                                |ui| {
-                                                    let items: Vec<GitFileItem> = self.files.iter()
-                                                        .filter(|f| !f.staged).cloned().collect();
-                                                    if items.is_empty() {
-                                                        ui.label(egui::RichText::new("No unstaged files").weak().size(11.0));
-                                                    }
-                                                    for item in items {
-                                                        let sel = self.selected_file_path.as_deref() == Some(&item.path);
-                                                        ui.push_id(format!("unstaged_{}", item.path), |ui| {
-                                                            ui.horizontal(|ui| {
-                                                                let mut chk = false;
-                                                                if ui.checkbox(&mut chk, "").changed() {
-                                                                    let p = item.path.clone();
-                                                                    undo.push(crate::ui::undo_manager::UndoAction::GitStageFile { 
-                                                                        repo_path: self.repo_path.clone(), 
-                                                                        rel_path: p.clone() 
-                                                                    }, format!("Stage: {}", p));
-                                                                    self.stage_file(&p);
-                                                                }
-                                                                if ui.selectable_label(sel,
-                                                                    format!("{} {}", Icons::get_file_icon(&item.path), item.path)
-                                                                ).clicked() {
-                                                                    let p = item.path.clone();
-                                                                    self.selected_file_path = Some(p.clone());
-                                                                    self.load_diff_for_file(&p);
-                                                                }
-                                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                                    let p = item.path.clone();
-                                                                    if ui.small_button("D").on_hover_text("Delete file").clicked() {
-                                                                        let full_path = std::path::Path::new(&self.repo_path).join(&p);
-                                                                        let was_dir = full_path.is_dir();
-                                                                        let saved = if was_dir { Vec::new() } else { std::fs::read(&full_path).unwrap_or_default() };
-                                                                        undo.push(crate::ui::undo_manager::UndoAction::GitDeleteFile { 
-                                                                            repo_path: self.repo_path.clone(), 
-                                                                            rel_path: p.clone(),
-                                                                            saved_content: saved,
-                                                                            was_dir,
-                                                                        }, format!("Delete: {}", p));
-                                                                        self.delete_file(&p);
-                                                                    }
-                                                                    if ui.small_button("R").on_hover_text("Revert file").clicked() {
-                                                                        let full_path = std::path::Path::new(&self.repo_path).join(&p);
-                                                                        let saved = std::fs::read(&full_path).unwrap_or_default();
-                                                                        undo.push(crate::ui::undo_manager::UndoAction::GitRevertFile { 
-                                                                            repo_path: self.repo_path.clone(), 
-                                                                            rel_path: p.clone(),
-                                                                            saved_content: saved,
-                                                                        }, format!("Revert: {}", p));
-                                                                        self.revert_file(&p);
-                                                                    }
-                                                                    ui.label(egui::RichText::new(item.status.label())
-                                                                        .size(9.0).color(item.status.color()));
-                                                                });
-                                                            });
-                                                        });
-                                                    }
-                                                },
-                                            );
-                                        });
-                                },
-                            );
-
-                            ui.separator();
-
-                            // Bottom Commit Box (Docked cleanly at the bottom of sidebar)
+            ui.allocate_ui_with_layout(
+                egui::vec2(body_avail_w, body_avail_h),
+                egui::Layout::left_to_right(egui::Align::Min),
+                |ui| {
+                    // ---------------------------------------------------------------------
+                    // A) LEFT SIDEBAR (IntelliJ Commit / Changes Panel)
+                    // ---------------------------------------------------------------------
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(sidebar_w, body_avail_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
                             egui::Frame::default()
-                                .fill(commit_bg)
+                                .fill(panel_bg)
                                 .inner_margin(6.0)
                                 .rounding(4.0)
                                 .stroke(egui::Stroke::new(1.0, border_c))
                                 .show(ui, |ui| {
-                                    ui.set_width(sidebar_w - 16.0);
-                                    ui.checkbox(&mut self.amend_last_commit, "Amend commit");
-                                    ui.add_space(2.0);
-                                    ui.add(
-                                        egui::TextEdit::multiline(&mut self.commit_message)
-                                            .hint_text("Write commit message...")
-                                            .desired_rows(3)
-                                            .desired_width(ui.available_width()),
-                                    );
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        let bw = (ui.available_width() - 4.0) / 2.0;
-                                        if ui.add(
-                                            egui::Button::new(egui::RichText::new("Commit")
-                                                .strong().color(egui::Color32::WHITE))
-                                            .fill(dark(53, 116, 240)).rounding(4.0)
-                                            .min_size(egui::vec2(bw, 26.0))
-                                        ).clicked() {
-                                            let prev_head = std::process::Command::new("git")
-                                                .args(["-C", &self.repo_path, "rev-parse", "HEAD"])
-                                                .output().ok()
-                                                .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None });
-                                            undo.push(crate::ui::undo_manager::UndoAction::GitCommit { 
-                                                repo_path: self.repo_path.clone(), 
-                                                was_amend: self.amend_last_commit,
-                                                prev_head,
-                                            }, "Commit");
-                                            self.commit(); 
-                                        }
-                                        if ui.add(
-                                            egui::Button::new(egui::RichText::new("Commit & Push")
-                                                .strong().color(egui::Color32::WHITE))
-                                            .fill(dark(45, 142, 87)).rounding(4.0)
-                                            .min_size(egui::vec2(bw, 26.0))
-                                        ).clicked() {
-                                            if self.commit() { self.push(); }
-                                        }
+                                    ui.set_min_size(egui::vec2(sidebar_w - 12.0, (body_avail_h - 12.0).max(60.0)));
+
+                                    ui.vertical(|ui| {
+                                        let staged_n   = self.files.iter().filter(|f|  f.staged).count();
+                                        let unstaged_n = self.files.iter().filter(|f| !f.staged).count();
+
+                                        // Sidebar Header
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Commit").strong().size(ui_font_size));
+                                            ui.label(egui::RichText::new(format!("({} files)", self.files.len())).weak().size((ui_font_size - 1.5).max(9.0)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.small_button("Stage All").clicked() {
+                                                    undo.push(crate::ui::undo_manager::UndoAction::GitStageAll { 
+                                                        repo_path: self.repo_path.clone() 
+                                                    }, "Stage all");
+                                                    self.stage_all(); 
+                                                }
+                                                if ui.small_button("Unstage All").clicked() {
+                                                    undo.push(crate::ui::undo_manager::UndoAction::GitUnstageAll { 
+                                                        repo_path: self.repo_path.clone() 
+                                                    }, "Unstage all");
+                                                    self.unstage_all(); 
+                                                }
+                                            });
+                                        });
+                                        ui.separator();
+
+                                        // Top File Tree (Fills available space above commit box)
+                                        let commit_box_h = 145.0_f32;
+                                        let tree_h = (body_avail_h - commit_box_h - 60.0).max(60.0);
+
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(sidebar_w - 12.0, tree_h),
+                                            egui::Layout::top_down(egui::Align::Min),
+                                            |ui| {
+                                                egui::ScrollArea::vertical()
+                                                    .id_salt("git_sidebar_file_tree_scroll")
+                                                    .auto_shrink([false, false])
+                                                    .max_height(tree_h)
+                                                    .show(ui, |ui| {
+                                                        // STAGED CHANGES
+                                                        ui.collapsing(
+                                                            egui::RichText::new(format!("Staged Changes ({})", staged_n))
+                                                                .strong().size((ui_font_size - 1.5).max(9.0)),
+                                                            |ui| {
+                                                                let items: Vec<GitFileItem> = self.files.iter()
+                                                                    .filter(|f| f.staged).cloned().collect();
+                                                                if items.is_empty() {
+                                                                    ui.label(egui::RichText::new("No staged files").weak().size((ui_font_size - 2.0).max(9.0)));
+                                                                }
+                                                                for item in items {
+                                                                    let sel = self.selected_file_path.as_deref() == Some(&item.path);
+                                                                    ui.push_id(format!("staged_{}", item.path), |ui| {
+                                                                        ui.horizontal(|ui| {
+                                                                            let mut chk = true;
+                                                                            if ui.checkbox(&mut chk, "").changed() {
+                                                                                let p = item.path.clone();
+                                                                                undo.push(crate::ui::undo_manager::UndoAction::GitUnstageFile { 
+                                                                                    repo_path: self.repo_path.clone(), 
+                                                                                    rel_path: p.clone() 
+                                                                                }, format!("Unstage: {}", p));
+                                                                                self.unstage_file(&p);
+                                                                            }
+                                                                            let icon = Icons::get_file_icon(&item.path);
+                                                                            let text = format!("{} {}", icon, item.path);
+                                                                            let resp = ui.selectable_label(sel, egui::RichText::new(text).size((ui_font_size - 1.0).max(10.0)));
+                                                                            if resp.clicked() {
+                                                                                self.select_file(&item.path);
+                                                                            }
+                                                                            resp.context_menu(|ui| {
+                                                                                if ui.button("Unstage").clicked() {
+                                                                                    let p = item.path.clone();
+                                                                                    undo.push(crate::ui::undo_manager::UndoAction::GitUnstageFile { 
+                                                                                        repo_path: self.repo_path.clone(), 
+                                                                                        rel_path: p.clone() 
+                                                                                    }, format!("Unstage: {}", p));
+                                                                                    self.unstage_file(&p);
+                                                                                    ui.close_menu();
+                                                                                }
+                                                                            });
+                                                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                                ui.label(egui::RichText::new(item.status.label()).size((ui_font_size - 2.5).max(8.0)).color(item.status.color()));
+                                                                            });
+                                                                        });
+                                                                    });
+                                                                }
+                                                            },
+                                                        );
+
+                                                        ui.add_space(4.0);
+
+                                                        // UNSTAGED CHANGES
+                                                        ui.collapsing(
+                                                            egui::RichText::new(format!("Changes ({})", unstaged_n))
+                                                                .strong().size((ui_font_size - 1.5).max(9.0)),
+                                                            |ui| {
+                                                                let items: Vec<GitFileItem> = self.files.iter()
+                                                                    .filter(|f| !f.staged).cloned().collect();
+                                                                if items.is_empty() {
+                                                                    ui.label(egui::RichText::new("No unstaged files").weak().size((ui_font_size - 2.0).max(9.0)));
+                                                                }
+                                                                for item in items {
+                                                                    let sel = self.selected_file_path.as_deref() == Some(&item.path);
+                                                                    ui.push_id(format!("unstaged_{}", item.path), |ui| {
+                                                                        ui.horizontal(|ui| {
+                                                                            let mut chk = false;
+                                                                            if ui.checkbox(&mut chk, "").changed() {
+                                                                                let p = item.path.clone();
+                                                                                undo.push(crate::ui::undo_manager::UndoAction::GitStageFile { 
+                                                                                    repo_path: self.repo_path.clone(), 
+                                                                                    rel_path: p.clone() 
+                                                                                }, format!("Stage: {}", p));
+                                                                                self.stage_file(&p);
+                                                                            }
+                                                                            let icon = Icons::get_file_icon(&item.path);
+                                                                            let text = format!("{} {}", icon, item.path);
+                                                                            let resp = ui.selectable_label(sel, egui::RichText::new(text).size((ui_font_size - 1.0).max(10.0)));
+                                                                            if resp.clicked() {
+                                                                                self.select_file(&item.path);
+                                                                            }
+                                                                            resp.context_menu(|ui| {
+                                                                                if ui.button("Stage").clicked() {
+                                                                                    let p = item.path.clone();
+                                                                                    undo.push(crate::ui::undo_manager::UndoAction::GitStageFile { 
+                                                                                        repo_path: self.repo_path.clone(), 
+                                                                                        rel_path: p.clone() 
+                                                                                    }, format!("Stage: {}", p));
+                                                                                    self.stage_file(&p);
+                                                                                    ui.close_menu();
+                                                                                }
+                                                                                if ui.button("Revert").clicked() {
+                                                                                    let p = item.path.clone();
+                                                                                    let full_path = std::path::Path::new(&self.repo_path).join(&p);
+                                                                                    let saved = std::fs::read(&full_path).unwrap_or_default();
+                                                                                    undo.push(crate::ui::undo_manager::UndoAction::GitRevertFile { 
+                                                                                        repo_path: self.repo_path.clone(), 
+                                                                                        rel_path: p.clone(),
+                                                                                        saved_content: saved,
+                                                                                    }, format!("Revert: {}", p));
+                                                                                    self.revert_file(&p);
+                                                                                    ui.close_menu();
+                                                                                }
+                                                                            });
+                                                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                                ui.label(egui::RichText::new(item.status.label()).size((ui_font_size - 2.5).max(8.0)).color(item.status.color()));
+                                                                            });
+                                                                        });
+                                                                    });
+                                                                }
+                                                            },
+                                                        );
+                                                    });
+                                            },
+                                        );
+
+                                        ui.separator();
+
+                                        // Bottom Commit Message Box
+                                        egui::Frame::default()
+                                            .fill(commit_bg)
+                                            .inner_margin(4.0)
+                                            .rounding(3.0)
+                                            .stroke(egui::Stroke::new(1.0, border_c))
+                                            .show(ui, |ui| {
+                                                ui.set_width(sidebar_w - 12.0);
+                                                ui.vertical(|ui| {
+                                                    ui.add(
+                                                        egui::TextEdit::multiline(&mut self.commit_message)
+                                                            .hint_text("Commit message...")
+                                                            .desired_rows(3)
+                                                            .desired_width(sidebar_w - 20.0)
+                                                            .font(egui::FontId::proportional((ui_font_size - 1.0).max(10.0))),
+                                                    );
+                                                    ui.add_space(2.0);
+                                                    ui.checkbox(&mut self.amend_last_commit, egui::RichText::new("Amend").size((ui_font_size - 2.0).max(9.0)));
+                                                    ui.add_space(4.0);
+
+                                                    let bw = (sidebar_w - 28.0) / 2.0;
+                                                    ui.horizontal(|ui| {
+                                                        if ui.add(
+                                                            egui::Button::new(egui::RichText::new("Commit")
+                                                                .strong().color(egui::Color32::WHITE))
+                                                            .fill(dark(53, 116, 240)).rounding(4.0)
+                                                            .min_size(egui::vec2(bw, 26.0))
+                                                        ).clicked() {
+                                                            let prev_head = std::process::Command::new("git")
+                                                                .args(["-C", &self.repo_path, "rev-parse", "HEAD"])
+                                                                .output().ok()
+                                                                .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None });
+                                                            undo.push(crate::ui::undo_manager::UndoAction::GitCommit { 
+                                                                repo_path: self.repo_path.clone(), 
+                                                                was_amend: self.amend_last_commit,
+                                                                prev_head,
+                                                            }, "Commit");
+                                                            self.commit(); 
+                                                        }
+                                                        if ui.add(
+                                                            egui::Button::new(egui::RichText::new("Commit & Push")
+                                                                .strong().color(egui::Color32::WHITE))
+                                                            .fill(dark(45, 142, 87)).rounding(4.0)
+                                                            .min_size(egui::vec2(bw, 26.0))
+                                                        ).clicked() {
+                                                            if self.commit() { self.push(); }
+                                                        }
+                                                    });
+                                                });
+                                            });
                                     });
                                 });
-                        });
-                    });
+                        },
+                    );
 
-                ui.add_space(4.0);
+                    ui.add_space(4.0);
 
-                // ---------------------------------------------------------------------
-                // B) RIGHT PANEL (IntelliJ Side-by-Side Diff View)
-                // ---------------------------------------------------------------------
-                egui::Frame::default()
-                    .fill(diff_bg)
-                    .inner_margin(4.0)
-                    .rounding(4.0)
-                    .stroke(egui::Stroke::new(1.0, border_c))
-                    .show(ui, |ui| {
-                        ui.set_width(diff_w);
-                        ui.set_height(body_h);
-
+                    // ---------------------------------------------------------------------
+                    // B) RIGHT PANEL (IntelliJ Side-by-Side Diff View)
+                    // ---------------------------------------------------------------------
+                    let diff_panel_w = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(diff_panel_w, body_avail_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            egui::Frame::default()
+                                .fill(diff_bg)
+                                .inner_margin(4.0)
+                                .rounding(4.0)
+                                .stroke(egui::Stroke::new(1.0, border_c))
+                                .show(ui, |ui| {
+                                    ui.set_min_size(egui::vec2(diff_panel_w - 8.0, (body_avail_h - 12.0).max(60.0)));
                         ui.vertical(|ui| {
                             let selected_path = match self.selected_file_path.clone() {
                                 Some(p) => p,
@@ -1090,12 +1105,19 @@ impl WindowApp for GitApp {
                                     });
                                 });
 
-                            let lnum_w: f32 = 40.0;
+                            let diff_inner_w = ui.available_width();
+                            let lnum_w: f32 = (mono_font_size * 3.5).max(36.0);
                             let gutter_w: f32 = 32.0;
-                            let code_w = ((diff_w - gutter_w - lnum_w * 2.0 - 24.0) / 2.0).max(280.0);
-                            let total_w = lnum_w * 2.0 + code_w * 2.0 + gutter_w;
-                            let row_h = 18.0_f32;
+                            let row_h = (mono_font_size + 6.5).max(18.0);
                             let mut hunk_to_apply: Option<usize> = None;
+
+                            // Calculate maximum line character length for horizontal scroll range
+                            let char_w = ui.fonts(|f| f.glyph_width(&egui::FontId::monospace(mono_font_size), ' ')).max(7.5);
+                            let mut max_chars = 30usize;
+                            for row in &self.diff_rows {
+                                max_chars = max_chars.max(row.left_text.len()).max(row.right_text.len());
+                            }
+                            let max_code_content_w = max_chars as f32 * char_w + 30.0;
 
                             // IntelliJ Diff High Contrast Colors & Colors for Gutter
                             let added_bg    = if is_dark { dark(24, 60, 36) }  else { dark(200, 245, 215) };  // #183c24
@@ -1109,6 +1131,28 @@ impl WindowApp for GitApp {
                             let normal_txt   = if is_dark { dark(188, 190, 196) } else { dark(30, 30, 30) };
 
                             if self.is_unified_view {
+                                let unif_lnum_w = lnum_w * 2.0;
+                                let unif_code_w = (diff_inner_w - unif_lnum_w - 20.0).max(100.0);
+                                let unif_max_scroll = (max_code_content_w - unif_code_w).max(0.0);
+                                self.diff_scroll_x = self.diff_scroll_x.clamp(0.0, unif_max_scroll);
+
+                                // Check horizontal scrolling events
+                                let diff_rect = ui.available_rect_before_wrap();
+                                if ui.rect_contains_pointer(diff_rect) {
+                                    let raw_delta = ui.input(|i| i.raw_scroll_delta);
+                                    let h_delta = if raw_delta.x != 0.0 {
+                                        raw_delta.x
+                                    } else if ui.input(|i| i.modifiers.shift) && raw_delta.y != 0.0 {
+                                        raw_delta.y
+                                    } else {
+                                        0.0
+                                    };
+                                    if h_delta != 0.0 && unif_max_scroll > 0.0 {
+                                        self.diff_scroll_x = (self.diff_scroll_x - h_delta).clamp(0.0, unif_max_scroll);
+                                        ui.ctx().request_repaint();
+                                    }
+                                }
+
                                 // Unified View Header
                                 egui::Frame::default()
                                     .fill(hdr_bg)
@@ -1117,7 +1161,7 @@ impl WindowApp for GitApp {
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 0.0;
-                                            ui.allocate_ui(egui::vec2(lnum_w * 2.0 + 8.0, 16.0), |ui| {
+                                            ui.allocate_ui(egui::vec2(unif_lnum_w + 8.0, 16.0), |ui| {
                                                 ui.label(egui::RichText::new("Line #").weak().size(11.0));
                                             });
                                             ui.label(egui::RichText::new("Unified Changes").strong().size(11.0));
@@ -1125,9 +1169,11 @@ impl WindowApp for GitApp {
                                     });
 
                                 // Unified View ScrollArea
-                                egui::ScrollArea::both()
+                                let diff_scroll_h = (ui.available_height() - if unif_max_scroll > 0.0 { 24.0 } else { 0.0 }).max(60.0);
+                                egui::ScrollArea::vertical()
                                     .id_salt("git_diff_unified_scroll")
                                     .auto_shrink([false, false])
+                                    .max_height(diff_scroll_h)
                                     .show_rows(ui, row_h, self.diff_rows.len(), |ui, row_range| {
                                         for r_idx in row_range {
                                             let row = &self.diff_rows[r_idx];
@@ -1140,30 +1186,93 @@ impl WindowApp for GitApp {
                                             };
 
                                             ui.push_id(r_idx, |ui| {
-                                                egui::Frame::default().fill(bg).show(ui, |ui| {
-                                                    ui.set_height(row_h);
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 0.0;
-                                                        let ln_l = row.left_line_num.map(|n| format!("{:>4} ", n)).unwrap_or_else(|| "     ".into());
-                                                        let ln_r = row.right_line_num.map(|n| format!("{:>4} ", n)).unwrap_or_else(|| "     ".into());
+                                                let (row_rect, _) = ui.allocate_exact_size(
+                                                    egui::vec2(diff_inner_w, row_h),
+                                                    egui::Sense::hover(),
+                                                );
+                                                let painter = ui.painter_at(row_rect);
 
-                                                        ui.allocate_ui(egui::vec2(lnum_w, row_h), |ui| {
-                                                            ui.label(egui::RichText::new(&ln_l).size(11.0).color(dark(90, 93, 99)).family(egui::FontFamily::Monospace));
-                                                        });
-                                                        ui.allocate_ui(egui::vec2(lnum_w, row_h), |ui| {
-                                                            ui.label(egui::RichText::new(&ln_r).size(11.0).color(dark(90, 93, 99)).family(egui::FontFamily::Monospace));
-                                                        });
-                                                        ui.add_space(8.0);
-                                                        let full_str = format!("{}{}", prefix, text);
-                                                        ui.add(egui::Label::new(
-                                                            egui::RichText::new(&full_str).size(11.5).color(txt_color).family(egui::FontFamily::Monospace)
-                                                        ).truncate());
-                                                    });
-                                                });
+                                                if bg != egui::Color32::TRANSPARENT {
+                                                    painter.rect_filled(row_rect, 0.0, bg);
+                                                }
+
+                                                let ln_l = row.left_line_num.map(|n| format!("{:>4} ", n)).unwrap_or_else(|| "     ".into());
+                                                let ln_r = row.right_line_num.map(|n| format!("{:>4} ", n)).unwrap_or_else(|| "     ".into());
+                                                let font = egui::FontId::monospace(mono_lnum_size);
+                                                let text_y = row_rect.min.y + (row_h - mono_font_size) / 2.0;
+
+                                                // Line numbers pinned
+                                                painter.text(
+                                                    egui::pos2(row_rect.min.x + 2.0, text_y),
+                                                    egui::Align2::LEFT_TOP,
+                                                    &ln_l,
+                                                    font.clone(),
+                                                    dark(90, 93, 99),
+                                                );
+                                                painter.text(
+                                                    egui::pos2(row_rect.min.x + lnum_w + 2.0, text_y),
+                                                    egui::Align2::LEFT_TOP,
+                                                    &ln_r,
+                                                    font.clone(),
+                                                    dark(90, 93, 99),
+                                                );
+
+                                                // Code text scrolled horizontally
+                                                let code_rect = egui::Rect::from_min_size(
+                                                    egui::pos2(row_rect.min.x + unif_lnum_w + 8.0, row_rect.min.y),
+                                                    egui::vec2(unif_code_w, row_h),
+                                                );
+                                                let code_painter = painter.with_clip_rect(code_rect);
+                                                let full_str = format!("{}{}", prefix, text);
+                                                code_painter.text(
+                                                    egui::pos2(code_rect.min.x + 4.0 - self.diff_scroll_x, text_y),
+                                                    egui::Align2::LEFT_TOP,
+                                                    &full_str,
+                                                    egui::FontId::monospace(mono_font_size),
+                                                    txt_color,
+                                                );
                                             });
                                         }
                                     });
+
+                                if unif_max_scroll > 0.0 {
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        ui.label(egui::RichText::new("⇋").size(11.0).weak());
+                                        let slider = egui::Slider::new(&mut self.diff_scroll_x, 0.0..=unif_max_scroll)
+                                            .show_value(false);
+                                        ui.add_sized(egui::vec2(ui.available_width() - 8.0, 14.0), slider);
+                                    });
+                                }
                             } else {
+                                // Side-by-Side View
+                                let visible_code_w = ((diff_inner_w - gutter_w - lnum_w * 2.0 - 8.0) / 2.0).max(60.0);
+                                let left_panel_w = lnum_w + visible_code_w;
+                                let right_panel_w = lnum_w + visible_code_w;
+                                let total_row_w = left_panel_w + gutter_w + right_panel_w;
+                                let padding_bg = if is_dark { dark(40, 40, 44) } else { dark(235, 235, 240) };
+
+                                let max_scroll_x = (max_code_content_w - visible_code_w).max(0.0);
+                                self.diff_scroll_x = self.diff_scroll_x.clamp(0.0, max_scroll_x);
+
+                                // Check horizontal scrolling events
+                                let diff_rect = ui.available_rect_before_wrap();
+                                if ui.rect_contains_pointer(diff_rect) {
+                                    let raw_delta = ui.input(|i| i.raw_scroll_delta);
+                                    let h_delta = if raw_delta.x != 0.0 {
+                                        raw_delta.x
+                                    } else if ui.input(|i| i.modifiers.shift) && raw_delta.y != 0.0 {
+                                        raw_delta.y
+                                    } else {
+                                        0.0
+                                    };
+                                    if h_delta != 0.0 && max_scroll_x > 0.0 {
+                                        self.diff_scroll_x = (self.diff_scroll_x - h_delta).clamp(0.0, max_scroll_x);
+                                        ui.ctx().request_repaint();
+                                    }
+                                }
+
                                 // Side-by-Side Column Header (With Center Separator Column)
                                 egui::Frame::default()
                                     .fill(hdr_bg)
@@ -1172,7 +1281,7 @@ impl WindowApp for GitApp {
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 0.0;
-                                            ui.allocate_ui(egui::vec2(lnum_w + code_w, 16.0), |ui| {
+                                            ui.allocate_ui(egui::vec2(left_panel_w, 16.0), |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.add_space(8.0);
                                                     ui.label(egui::RichText::new("HEAD (Original version)").strong().size(11.0));
@@ -1189,7 +1298,7 @@ impl WindowApp for GitApp {
                                                 [gutter_rect.right_top(), gutter_rect.right_bottom()],
                                                 egui::Stroke::new(1.0, border_c),
                                             );
-                                            ui.allocate_ui(egui::vec2(lnum_w + code_w, 16.0), |ui| {
+                                            ui.allocate_ui(egui::vec2(right_panel_w, 16.0), |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.add_space(8.0);
                                                     ui.label(egui::RichText::new("Working Copy (Current version)").strong().size(11.0));
@@ -1199,16 +1308,12 @@ impl WindowApp for GitApp {
                                     });
 
                                 // Side-by-Side ScrollArea
-                                egui::ScrollArea::both()
+                                let diff_scroll_h = (ui.available_height() - if max_scroll_x > 0.0 { 24.0 } else { 0.0 }).max(60.0);
+                                egui::ScrollArea::vertical()
                                     .id_salt("git_diff_side_by_side_scroll")
                                     .auto_shrink([false, false])
+                                    .max_height(diff_scroll_h)
                                     .show_rows(ui, row_h, self.diff_rows.len(), |ui, row_range| {
-                                        ui.set_min_width(total_w);
-
-                                        let left_panel_w = lnum_w + code_w;
-                                        let right_panel_w = lnum_w + code_w;
-                                        let padding_bg = if is_dark { dark(40, 40, 44) } else { dark(235, 235, 240) };
-
                                         for r_idx in row_range {
                                             let row = &self.diff_rows[r_idx];
 
@@ -1224,7 +1329,7 @@ impl WindowApp for GitApp {
                                             ui.push_id(r_idx, |ui| {
                                                 // Allocate the full row as one horizontal strip
                                                 let (row_rect, _) = ui.allocate_exact_size(
-                                                    egui::vec2(total_w, row_h),
+                                                    egui::vec2(total_row_w, row_h),
                                                     egui::Sense::hover(),
                                                 );
 
@@ -1266,12 +1371,12 @@ impl WindowApp for GitApp {
                                                 }
 
                                                 // --- Paint text using painter (pixel-exact positioning) ---
-                                                let font = egui::FontId::monospace(11.0);
-                                                let code_font = egui::FontId::monospace(11.5);
+                                                let font = egui::FontId::monospace(mono_lnum_size);
+                                                let code_font = egui::FontId::monospace(mono_font_size);
                                                 let lnum_color = dark(90, 93, 99);
-                                                let text_y = row_rect.min.y + (row_h - 11.5) / 2.0;
+                                                let text_y = row_rect.min.y + (row_h - mono_font_size) / 2.0;
 
-                                                // 1. Left line number
+                                                // 1. Left line number (pinned)
                                                 let ln_l = row.left_line_num
                                                     .map(|n| format!("{:>4} ", n))
                                                     .unwrap_or_else(|| "     ".into());
@@ -1283,14 +1388,14 @@ impl WindowApp for GitApp {
                                                     lnum_color,
                                                 );
 
-                                                // 2. Left code text (clipped)
+                                                // 2. Left code text (scrolled synchronously by diff_scroll_x and clipped)
                                                 let left_code_rect = egui::Rect::from_min_size(
                                                     egui::pos2(left_rect.min.x + lnum_w, row_rect.min.y),
-                                                    egui::vec2(code_w, row_h),
+                                                    egui::vec2(visible_code_w, row_h),
                                                 );
                                                 let left_code_painter = painter.with_clip_rect(left_code_rect);
                                                 left_code_painter.text(
-                                                    egui::pos2(left_code_rect.min.x + 4.0, text_y),
+                                                    egui::pos2(left_code_rect.min.x + 4.0 - self.diff_scroll_x, text_y),
                                                     egui::Align2::LEFT_TOP,
                                                     &row.left_text,
                                                     code_font.clone(),
@@ -1323,7 +1428,7 @@ impl WindowApp for GitApp {
                                                     }
                                                 }
 
-                                                // 4. Right line number
+                                                // 4. Right line number (pinned)
                                                 let ln_r = row.right_line_num
                                                     .map(|n| format!("{:>4} ", n))
                                                     .unwrap_or_else(|| "     ".into());
@@ -1335,14 +1440,14 @@ impl WindowApp for GitApp {
                                                     lnum_color,
                                                 );
 
-                                                // 5. Right code text (clipped)
+                                                // 5. Right code text (scrolled synchronously by diff_scroll_x and clipped)
                                                 let right_code_rect = egui::Rect::from_min_size(
                                                     egui::pos2(right_rect.min.x + lnum_w, row_rect.min.y),
-                                                    egui::vec2(code_w, row_h),
+                                                    egui::vec2(visible_code_w, row_h),
                                                 );
                                                 let right_code_painter = painter.with_clip_rect(right_code_rect);
                                                 right_code_painter.text(
-                                                    egui::pos2(right_code_rect.min.x + 4.0, text_y),
+                                                    egui::pos2(right_code_rect.min.x + 4.0 - self.diff_scroll_x, text_y),
                                                     egui::Align2::LEFT_TOP,
                                                     &row.right_text,
                                                     code_font.clone(),
@@ -1351,6 +1456,18 @@ impl WindowApp for GitApp {
                                             });
                                         }
                                     });
+
+                                // Synchronized Horizontal Scrollbar Bar at bottom
+                                if max_scroll_x > 0.0 {
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        ui.label(egui::RichText::new("⇋").size(11.0).weak());
+                                        let slider = egui::Slider::new(&mut self.diff_scroll_x, 0.0..=max_scroll_x)
+                                            .show_value(false);
+                                        ui.add_sized(egui::vec2(ui.available_width() - 8.0, 14.0), slider);
+                                    });
+                                }
                             }
 
                             if let Some(h_idx) = hunk_to_apply {
@@ -1367,10 +1484,12 @@ impl WindowApp for GitApp {
                             }
                         });
                     });
-            });
+                },
+            );
         });
+    });
 
-        None
+    None
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -1380,11 +1499,6 @@ impl WindowApp for GitApp {
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }
-}
-
-impl Icons {
-    pub const CARET_DOWN_KEY: &'static str = "\u{e136}";
-    pub const CARET_UP_KEY: &'static str = "\u{e140}";
 }
 
 #[cfg(test)]
@@ -1470,6 +1584,26 @@ mod tests {
         assert_eq!(last.kind, DiffKind::Equal);
         assert_eq!(last.left_line_num, Some(4));
         assert_eq!(last.right_line_num, Some(5));
+    }
+
+    #[test]
+    fn test_diff_horizontal_scroll_clamping() {
+        let left = "let very_long_line_of_rust_code_in_head = foo_bar_baz_qux_quux_corge_grault_garply_waldo_fred_plugh_xyzzy_thud();";
+        let right = "let very_long_line_of_rust_code_in_working = foo_bar_baz_qux_quux_corge_grault_garply_waldo_fred_plugh_xyzzy_thud();";
+        let (rows, _) = compute_side_by_side_diff(left, right);
+
+        let char_w = 8.0_f32;
+        let mut max_chars = 30usize;
+        for row in &rows {
+            max_chars = max_chars.max(row.left_text.len()).max(row.right_text.len());
+        }
+        let max_code_content_w = max_chars as f32 * char_w + 30.0;
+        let visible_code_w = 200.0_f32;
+        let max_scroll_x = (max_code_content_w - visible_code_w).max(0.0);
+
+        assert!(max_scroll_x > 0.0);
+        let clamped = (max_scroll_x + 100.0).clamp(0.0, max_scroll_x);
+        assert_eq!(clamped, max_scroll_x);
     }
 }
 
